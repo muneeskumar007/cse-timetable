@@ -9,6 +9,7 @@ import type {
   Lab,
   PeriodConfig,
   FixedSlot,
+  FixedAssignment,
   TimetableEntry,
   TimetableVersion,
   DepartmentSettings,
@@ -24,6 +25,7 @@ export class TimetableDatabase extends Dexie {
   labs!: Table<Lab, string>;
   periodConfigs!: Table<PeriodConfig, string>;
   fixedSlots!: Table<FixedSlot, string>;
+  fixedAssignments!: Table<FixedAssignment, string>;
   timetableEntries!: Table<TimetableEntry, string>;
   generatedTimetableEntries!: Table<TimetableEntry, string>;
   timetableVersions!: Table<TimetableVersion, string>;
@@ -45,6 +47,10 @@ export class TimetableDatabase extends Dexie {
       generatedTimetableEntries: 'id, day, periodNumber, yearId, sectionId, facultyCode',
       timetableVersions: 'id, &versionNumber, timestamp, isCurrent, isGenerated',
       settings: 'id',
+    });
+
+    this.version(2).stores({
+      fixedAssignments: 'id, yearId, sectionId, assignmentType, day, active, [yearId+sectionId]',
     });
   }
 }

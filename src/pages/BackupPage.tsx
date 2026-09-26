@@ -11,7 +11,7 @@ import {
   resetProject,
   type BackupValidationResult,
 } from '../services/backupService';
-import { loadDemoData } from '../db/demoData';
+import { cloudService } from '../services/cloudService';
 import {
   Database,
   Download,
@@ -100,7 +100,7 @@ export const BackupPage: React.FC = () => {
       addToast({
         type: 'success',
         title: 'Project Reset',
-        message: 'IndexedDB tables reset to initial factory configuration.',
+        message: 'Database tables reset to initial factory configuration across cloud and local storage.',
       });
       setIsResetDialogOpen(false);
     } catch (err: any) {
@@ -113,7 +113,7 @@ export const BackupPage: React.FC = () => {
   const handleLoadDemo = async () => {
     setIsLoadingDemo(true);
     try {
-      await loadDemoData();
+      await cloudService.loadDemoData();
       addToast({
         type: 'success',
         title: 'Demo Data Loaded',

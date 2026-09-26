@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
+import { cloudService } from '../services/cloudService';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -10,10 +10,7 @@ import type { DepartmentSettings, PeriodConfig, FixedSlot } from '../types';
 
 export const SettingsPage: React.FC = () => {
   const { addToast } = useUiStore();
-
-  const settingsList = useLiveQuery(() => db.settings.toArray(), []) || [];
-  const periods = useLiveQuery(() => db.periodConfigs.orderBy('periodNumber').toArray(), []) || [];
-  const fixedSlots = useLiveQuery(() => db.fixedSlots.toArray(), []) || [];
+  const { settings, periods, fixedSlots } = useData();
 
   const [deptName, setDeptName] = useState('Department of Computer Science and Engineering');
   const [collegeName, setCollegeName] = useState('College of Engineering');
@@ -25,20 +22,20 @@ export const SettingsPage: React.FC = () => {
   const [periodTimings, setPeriodTimings] = useState<PeriodConfig[]>([]);
 
   useEffect(() => {
-    if (settingsList.length > 0) {
-      const s = settingsList[0];
-      setDeptName(s.departmentName);
-      setCollegeName(s.collegeName || '');
-      setAcademicYear(s.academicYear || '2026-2027');
-      setPeriodsPerFullDay(s.periodsPerFullDay || 7);
-      setPeriodsOnSaturday(s.periodsOnSaturday || 4);
-      setLunchAfterPeriod(s.lunchAfterPeriod || 4);
+    if (settings) {
+      setDeptName(settings.departmentName);
+      setCollegeName(settings.collegeName || '');
+      setAcademicYear(settings.academicYear || '2026-2027');
+      setPeriodsPerFullDay(settings.periodsPerFullDay || 7);
+      setPeriodsOnSaturday(settings.periodsOnSaturday || 4);
+      setLunchAfterPeriod(settings.lunchAfterPeriod || 4);
     }
-  }, [settingsList]);
+  }, [settings]);
 
   useEffect(() => {
     if (periods.length > 0) {
-      setPeriodTimings(periods);
+      const sorted = [...periods].sort((a, b) => a.periodNumber - b.periodNumber);
+      setPeriodTimings(sorted);
     }
   }, [periods]);
 
@@ -52,31 +49,18 @@ export const SettingsPage: React.FC = () => {
     e.preventDefault();
 
     try {
-      await db.transaction('rw', [db.settings, db.periodConfigs], async () => {
-        // Save general settings
-        const currentSetting = settingsList[0];
-        const updatedSettings: DepartmentSettings = {
-          id: currentSetting?.id || 'default',
-          departmentName: deptName.trim(),
-          collegeName: collegeName.trim(),
-          academicYear: academicYear.trim(),
-          workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-          periodsPerFullDay: Number(periodsPerFullDay) || 7,
-          periodsOnSaturday: Number(periodsOnSaturday) || 4,
-          lunchAfterPeriod: Number(lunchAfterPeriod) || 4,
-        };
+      const updatedSettings: DepartmentSettings = {
+        id: settings?.id || 'default',
+        departmentName: deptName.trim(),
+        collegeName: collegeName.trim(),
+        academicYear: academicYear.trim(),
+        workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
+        periodsPerFullDay: Number(periodsPerFullDay) || 7,
+        periodsOnSaturday: Number(periodsOnSaturday) || 4,
+        lunchAfterPeriod: Number(lunchAfterPeriod) || 4,
+      };
 
-        await db.settings.put(updatedSettings);
-
-        // Save periods
-        for (const p of periodTimings) {
-          await db.periodConfigs.update(p.id, {
-            name: p.name,
-            startTime: p.startTime,
-            endTime: p.endTime,
-          });
-        }
-      });
+      await cloudService.settings.saveSettings(updatedSettings, periodTimings);
 
       addToast({
         type: 'success',

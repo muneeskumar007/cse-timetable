@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
+import { cloudService } from '../services/cloudService';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -12,13 +12,10 @@ import type { Lab, LabType } from '../types';
 
 export const LabsPage: React.FC = () => {
   const { addToast } = useUiStore();
+  const { labs, years, sections, rooms: allRooms, faculty } = useData();
 
-  const labs = useLiveQuery(() => db.labs.toArray(), []) || [];
-  const years = useLiveQuery(() => db.academicYears.orderBy('orderIndex').toArray(), []) || [];
-  const sections = useLiveQuery(() => db.sections.toArray(), []) || [];
-  const rooms = useLiveQuery(() => db.rooms.where('roomType').equals('lab').toArray(), []) || [];
-  const allRooms = useLiveQuery(() => db.rooms.toArray(), []) || [];
-  const faculty = useLiveQuery(() => db.faculty.toArray(), []) || [];
+  const sortedYears = [...years].sort((a, b) => a.orderIndex - b.orderIndex);
+  const rooms = allRooms.filter((r) => r.roomType === 'lab');
 
   // Filter state
   const [selectedYearFilter, setSelectedYearFilter] = useState<string>('all');
@@ -40,7 +37,7 @@ export const LabsPage: React.FC = () => {
     setEditingLab(null);
     setLabName('');
     setLabType('practical');
-    const defaultYearId = years[0]?.id || '';
+    const defaultYearId = sortedYears[0]?.id || '';
     setTargetYearId(defaultYearId);
     const availableSections = sections.filter((s) => s.yearId === defaultYearId);
     setTargetSectionId(availableSections[0]?.id || '');
@@ -86,7 +83,7 @@ export const LabsPage: React.FC = () => {
     const weeklyPeriods = labType === 'practical' ? 3 : 2;
 
     if (!editingLab) {
-      await db.labs.add({
+      await cloudService.labs.add({
         id: `lab_${Date.now()}`,
         labName: cleanName,
         labType,
@@ -105,7 +102,7 @@ export const LabsPage: React.FC = () => {
         message: `${cleanName} (${labType === 'practical' ? '3 periods' : '2 periods'}) added for Sec ${matchedSec.sectionName}.`,
       });
     } else {
-      await db.labs.update(editingLab.id, {
+      await cloudService.labs.update(editingLab.id, {
         labName: cleanName,
         labType,
         yearId: targetYearId,
@@ -129,7 +126,7 @@ export const LabsPage: React.FC = () => {
 
   const handleDeleteLab = async () => {
     if (!deletingLab) return;
-    await db.labs.delete(deletingLab.id);
+    await cloudService.labs.delete(deletingLab.id);
     addToast({
       type: 'success',
       title: 'Lab Session Removed',

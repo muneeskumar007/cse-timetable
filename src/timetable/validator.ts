@@ -8,12 +8,14 @@ import type {
   DayOfWeek,
   ValidationResult,
   ValidationError,
+  FixedAssignment,
 } from '../types';
 
 export interface ValidationContext {
   assignments: SubjectAssignment[];
   labs: Lab[];
   fixedSlots: FixedSlot[];
+  fixedAssignments?: FixedAssignment[];
   settings: DepartmentSettings;
   periods: PeriodConfig[];
 }
@@ -45,6 +47,56 @@ export function validateTimetable(
         facultyCode: c.facultyCode,
         message: `${slot.day} Period ${slot.periodNumber} is a protected ${slot.description}. Normal class "${c.subjectName}" cannot be scheduled here.`,
       });
+    }
+  }
+
+  // 1b. Check Fixed Assignments
+  const fixedAssignments = context.fixedAssignments || [];
+  for (const fa of fixedAssignments) {
+    if (!fa.active) continue;
+    for (const p of fa.periodNumbers) {
+      // Check collision with fixed slots (e.g. Unit test)
+      const collidesWithFixedSlot = fixedSlots.some(
+        (s) => s.day === fa.day && s.periodNumber === p
+      );
+      if (collidesWithFixedSlot) {
+        errors.push({
+          type: 'FIXED_ASSIGNMENT_CONFLICT',
+          severity: 'error',
+          day: fa.day,
+          periodNumber: p,
+          sectionId: fa.sectionId,
+          sectionName: fa.sectionName,
+          message: `Fixed assignment for ${fa.subjectName || fa.labName || 'Library'} on ${fa.day} Period ${p} collides with a protected fixed slot.`,
+        });
+      }
+
+      // Check Saturday restriction for practical lab
+      if (fa.day === 'Saturday' && fa.assignmentType === 'lab' && fa.labType === 'practical') {
+        errors.push({
+          type: 'SATURDAY_RESTRICTION',
+          severity: 'error',
+          day: 'Saturday',
+          periodNumber: p,
+          sectionId: fa.sectionId,
+          message: `Fixed Practical Lab "${fa.labName}" cannot be scheduled on Saturday.`,
+        });
+      }
+
+      // Check lunch crossing for fixed lab
+      if (fa.assignmentType === 'lab') {
+        const hasPreLunch = fa.periodNumbers.some((pn) => pn <= lunchAfterPeriod);
+        const hasPostLunch = fa.periodNumbers.some((pn) => pn > lunchAfterPeriod);
+        if (hasPreLunch && hasPostLunch) {
+          errors.push({
+            type: 'LUNCH_CROSSING',
+            severity: 'error',
+            day: fa.day,
+            sectionId: fa.sectionId,
+            message: `Fixed Lab "${fa.labName}" spans across lunch break after Period ${lunchAfterPeriod}.`,
+          });
+        }
+      }
     }
   }
 
@@ -298,6 +350,62 @@ export function validateTimetable(
     }
   }
 
+  // 7. Library Requirement (At least 1 period per week per section)
+  const checkedSections = new Set<string>();
+  for (const e of entries) {
+    if (e.sectionId) checkedSections.add(e.sectionId);
+  }
+  for (const secId of checkedSections) {
+    const libCount = entries.filter((e) => e.sectionId === secId && e.entryType === 'library').length;
+    if (libCount === 0) {
+      const secName = entries.find((e) => e.sectionId === secId)?.sectionName || secId;
+      errors.push({
+        type: 'LIBRARY_REQUIREMENT',
+        severity: 'error',
+        sectionId: secId,
+        sectionName: secName,
+        message: `Section ${secName} does not have any Library period scheduled (minimum 1 required per week).`,
+      });
+    }
+  }
+
+  // 8. Faculty Non-Consecutive Teaching warning
+  const facDayMap = new Map<string, TimetableEntry[]>();
+  for (const e of entries) {
+    if (e.facultyCode && e.entryType !== 'unit_test') {
+      const key = `${e.facultyCode.toUpperCase()}_${e.day}`;
+      const list = facDayMap.get(key) || [];
+      list.push(e);
+      facDayMap.set(key, list);
+    }
+  }
+
+  for (const fEntries of facDayMap.values()) {
+    const sorted = [...fEntries].sort((a, b) => a.periodNumber - b.periodNumber);
+    let consecutive = 1;
+    for (let i = 1; i < sorted.length; i++) {
+      if (sorted[i].periodNumber === sorted[i - 1].periodNumber + 1) {
+        const sameLabBlock = sorted[i].labBlockId && sorted[i].labBlockId === sorted[i - 1].labBlockId;
+        if (!sameLabBlock) {
+          consecutive++;
+          if (consecutive >= 3) {
+            warnings.push({
+              type: 'FACULTY_CONSECUTIVE',
+              severity: 'warning',
+              day: sorted[i].day,
+              periodNumber: sorted[i].periodNumber,
+              facultyCode: sorted[i].facultyCode,
+              facultyName: sorted[i].facultyName,
+              message: `Faculty ${sorted[i].facultyName} has ${consecutive} consecutive teaching periods on ${sorted[i].day} ending at Period ${sorted[i].periodNumber}.`,
+            });
+          }
+        }
+      } else {
+        consecutive = 1;
+      }
+    }
+  }
+
   return {
     isValid: errors.length === 0,
     errors,
@@ -316,6 +424,13 @@ export function canMoveOrSwap(
   targetPeriodNumber: number,
   context: ValidationContext
 ): { allowed: boolean; reason?: string } {
+  if (sourceEntry.isFixed) {
+    return {
+      allowed: false,
+      reason: 'This slot is a Fixed Assignment and cannot be moved or swapped. Unlock it in Fixed Assignments to modify.',
+    };
+  }
+
   const { fixedSlots, settings } = context;
   const maxSaturdayPeriods = settings.periodsOnSaturday || 4;
   const lunchAfterPeriod = settings.lunchAfterPeriod || 4;
@@ -379,6 +494,9 @@ export function canMoveOrSwap(
       );
 
       if (collision) {
+        if (collision.isFixed) {
+          return { allowed: false, reason: `Slot at Period ${p} contains a Fixed Assignment and cannot be displaced.` };
+        }
         if (collision.facultyCode.toUpperCase() === sourceEntry.facultyCode.toUpperCase()) {
           return { allowed: false, reason: `Faculty ${sourceEntry.facultyName} is already teaching Sec ${collision.sectionName} (${collision.subjectCode}) on ${targetDay} Period ${p}.` };
         }
@@ -401,6 +519,10 @@ export function canMoveOrSwap(
   );
 
   if (collision) {
+    if (collision.isFixed) {
+      return { allowed: false, reason: 'The target slot is a Fixed Assignment and cannot be displaced. Unlock it in Fixed Assignments to modify.' };
+    }
+
     // If collision belongs to the same section, this is a swap
     if (collision.sectionId === sourceEntry.sectionId) {
       // If the colliding item is a lab, we cannot swap a single theory into part of a lab block!

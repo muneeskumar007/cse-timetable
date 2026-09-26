@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
+import { cloudService } from '../services/cloudService';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -29,10 +29,7 @@ import type { Faculty } from '../types';
 
 export const FacultyPage: React.FC = () => {
   const { setPage, setSelectedFacultyCode, addToast } = useUiStore();
-
-  const faculties = useLiveQuery(() => db.faculty.toArray(), []) || [];
-  const assignments = useLiveQuery(() => db.subjectAssignments.toArray(), []) || [];
-  const labs = useLiveQuery(() => db.labs.toArray(), []) || [];
+  const { faculty: faculties, assignments, labs } = useData();
 
   const workloads = calculateFacultyWorkloads(faculties, assignments, labs);
   const workloadMap = new Map(workloads.map((w) => [w.facultyCode.toUpperCase(), w]));
@@ -92,7 +89,7 @@ export const FacultyPage: React.FC = () => {
         });
         return;
       }
-      await db.faculty.add({
+      await cloudService.faculty.add({
         id: `fac_${Date.now()}`,
         facultyCode: cleanCode,
         facultyName: cleanName,
@@ -102,7 +99,7 @@ export const FacultyPage: React.FC = () => {
       });
       addToast({ type: 'success', title: 'Faculty Added', message: `${cleanName} (${cleanCode}) added successfully.` });
     } else {
-      await db.faculty.update(editingFaculty.id, {
+      await cloudService.faculty.update(editingFaculty.id, {
         facultyCode: cleanCode,
         facultyName: cleanName,
         weeklyWorkload: Number(weeklyWorkload) || 18,
@@ -128,7 +125,7 @@ export const FacultyPage: React.FC = () => {
       });
     }
 
-    await db.faculty.delete(deletingFaculty.id);
+    await cloudService.faculty.delete(deletingFaculty.id);
     addToast({ type: 'success', title: 'Faculty Removed', message: `${deletingFaculty.facultyName} has been deleted.` });
     setDeletingFaculty(null);
   };
@@ -157,27 +154,7 @@ export const FacultyPage: React.FC = () => {
     setIsImporting(true);
 
     try {
-      await db.transaction('rw', db.faculty, async () => {
-        for (const row of importResult.validRows) {
-          const existing = faculties.find((f) => f.facultyCode.toUpperCase() === row.facultyCode.toUpperCase());
-          if (existing) {
-            await db.faculty.update(existing.id, {
-              facultyName: row.facultyName,
-              weeklyWorkload: row.weeklyWorkload,
-              designation: row.designation || existing.designation,
-            });
-          } else {
-            await db.faculty.add({
-              id: `fac_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-              facultyCode: row.facultyCode,
-              facultyName: row.facultyName,
-              weeklyWorkload: row.weeklyWorkload,
-              designation: row.designation,
-              isActive: true,
-            });
-          }
-        }
-      });
+      await cloudService.faculty.bulkUpsert(importResult.validRows, faculties);
 
       addToast({
         type: 'success',
@@ -482,7 +459,7 @@ export const FacultyPage: React.FC = () => {
                   <AlertCircle className="w-4 h-4" />
                   <span>Row Validation Issues (these rows will be skipped):</span>
                 </div>
-                {importResult.errors.map((err, idx) => (
+                {importResult.errors.map((err: { row: number; error: string }, idx: number) => (
                   <p key={idx} className="text-xs text-rose-600 pl-5">
                     • <strong>Row {err.row}:</strong> {err.error}
                   </p>
@@ -507,7 +484,7 @@ export const FacultyPage: React.FC = () => {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {importResult.validRows.map((r, i) => (
+                      {importResult.validRows.map((r: any, i: number) => (
                         <tr key={i} className="hover:bg-slate-50/60">
                           <td className="p-2 font-mono font-semibold text-indigo-600">{r.facultyCode}</td>
                           <td className="p-2 font-medium text-slate-800">{r.facultyName}</td>

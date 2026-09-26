@@ -1,6 +1,5 @@
 import React from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -12,27 +11,13 @@ import { User, Download, FileSpreadsheet, Calendar, BookOpen } from 'lucide-reac
 
 export const FacultyTimetablePage: React.FC = () => {
   const { selectedFacultyCode, setSelectedFacultyCode, setPage } = useUiStore();
+  const { faculty, periods: rawPeriods, entries, settings } = useData();
 
-  const faculty = useLiveQuery(() => db.faculty.toArray(), []) || [];
+  const periods = [...rawPeriods].sort((a, b) => a.periodNumber - b.periodNumber);
   const activeFacultyCode = selectedFacultyCode || faculty[0]?.facultyCode || '';
   const currentFaculty = faculty.find(
     (f) => f.facultyCode.toUpperCase() === activeFacultyCode.toUpperCase()
   ) || faculty[0];
-
-  const periods = useLiveQuery(() => db.periodConfigs.orderBy('periodNumber').toArray(), []) || [];
-  const entries = useLiveQuery(() => db.timetableEntries.toArray(), []) || [];
-  const settingsList = useLiveQuery(() => db.settings.toArray(), []) || [];
-
-  const settings = settingsList[0] || {
-    id: 'default',
-    departmentName: 'Department of Computer Science and Engineering',
-    collegeName: 'College of Engineering',
-    academicYear: '2026-2027',
-    workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-    periodsPerFullDay: 7,
-    periodsOnSaturday: 4,
-    lunchAfterPeriod: 4,
-  };
 
   // Filter entries taught by this faculty member
   const facultyEntries = entries.filter(

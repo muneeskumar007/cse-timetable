@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { cloudService } from '../services/cloudService';
 import { db } from '../db/database';
 import type { TimetableEntry, TimetableVersion } from '../types';
 
@@ -14,7 +15,7 @@ interface TimetableStoreState {
   setDiagnostics: (diagnostics: string[]) => void;
   setStagedEntries: (entries: TimetableEntry[], markUnsaved?: boolean) => void;
   loadSavedEntries: (entries: TimetableEntry[]) => void;
-  saveCurrentTimetable: () => Promise<void>;
+  saveCurrentTimetable: () => Promise<TimetableVersion | null>;
   resetToGenerated: () => Promise<boolean>;
   restoreVersion: (version: TimetableVersion) => Promise<void>;
 }
@@ -40,48 +41,25 @@ export const useTimetableStore = create<TimetableStoreState>((set, get) => ({
 
   saveCurrentTimetable: async () => {
     const entries = get().stagedEntries;
-    if (entries.length === 0) return;
+    if (entries.length === 0) return null;
 
-    await db.transaction('rw', [db.timetableEntries, db.timetableVersions], async () => {
-      await db.timetableEntries.clear();
-      await db.timetableEntries.bulkAdd(entries);
-
-      // Create snapshot version
-      const currentVersionCount = await db.timetableVersions.count();
-      const newVersion: TimetableVersion = {
-        id: `ver_${Date.now()}`,
-        versionNumber: currentVersionCount + 1,
-        name: `Version ${currentVersionCount + 1}`,
-        timestamp: new Date().toLocaleString(),
-        isCurrent: true,
-        isGenerated: false,
-        entries: [...entries],
-      };
-      await db.timetableVersions.add(newVersion);
-    });
+    const count = await db.timetableVersions.count();
+    const newVersion = await cloudService.timetable.saveCurrent(entries, count);
 
     set({ hasUnsavedChanges: false });
+    return newVersion;
   },
 
   resetToGenerated: async () => {
-    const generated = await db.generatedTimetableEntries.toArray();
-    if (generated.length === 0) return false;
-
-    await db.transaction('rw', [db.timetableEntries], async () => {
-      await db.timetableEntries.clear();
-      await db.timetableEntries.bulkAdd(generated);
-    });
+    const generated = await cloudService.timetable.resetToGenerated();
+    if (!generated || generated.length === 0) return false;
 
     set({ stagedEntries: generated, hasUnsavedChanges: false });
     return true;
   },
 
   restoreVersion: async (version: TimetableVersion) => {
-    await db.transaction('rw', [db.timetableEntries], async () => {
-      await db.timetableEntries.clear();
-      await db.timetableEntries.bulkAdd(version.entries);
-    });
-
+    await cloudService.timetable.restoreVersion(version);
     set({ stagedEntries: version.entries, hasUnsavedChanges: false });
   },
 }));

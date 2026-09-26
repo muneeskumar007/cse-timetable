@@ -1,6 +1,5 @@
 import React from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -34,41 +33,32 @@ export const Dashboard: React.FC = () => {
     setPage,
   } = useUiStore();
 
-  const years = useLiveQuery(() => db.academicYears.orderBy('orderIndex').toArray(), []) || [];
-  const activeYearId = selectedYearId || years[0]?.id;
-  const currentYear = years.find((y) => y.id === activeYearId) || years[0];
+  const {
+    years,
+    sections: allSections,
+    faculty,
+    rooms,
+    assignments,
+    labs,
+    periods: rawPeriods,
+    fixedSlots,
+    entries,
+    versions,
+    settings,
+  } = useData();
 
-  const sections = useLiveQuery(
-    () => (activeYearId ? db.sections.where('yearId').equals(activeYearId).toArray() : []),
-    [activeYearId]
-  ) || [];
+  const sortedYears = [...years].sort((a, b) => a.orderIndex - b.orderIndex);
+  const activeYearId = selectedYearId || sortedYears[0]?.id;
+  const currentYear = sortedYears.find((y) => y.id === activeYearId) || sortedYears[0];
+
+  const sections = allSections.filter((s) => s.yearId === activeYearId);
   const activeSectionId = selectedSectionId || sections[0]?.id;
   const currentSection = sections.find((s) => s.id === activeSectionId) || sections[0];
 
-  const faculty = useLiveQuery(() => db.faculty.toArray(), []) || [];
-  const allSections = useLiveQuery(() => db.sections.toArray(), []) || [];
-  const rooms = useLiveQuery(() => db.rooms.toArray(), []) || [];
-  const assignments = useLiveQuery(() => db.subjectAssignments.toArray(), []) || [];
-  const labs = useLiveQuery(() => db.labs.toArray(), []) || [];
-  const periods = useLiveQuery(() => db.periodConfigs.orderBy('periodNumber').toArray(), []) || [];
-  const fixedSlots = useLiveQuery(() => db.fixedSlots.toArray(), []) || [];
-  const entries = useLiveQuery(() => db.timetableEntries.toArray(), []) || [];
-  const versions = useLiveQuery(() => db.timetableVersions.toArray(), []) || [];
-  const settingsList = useLiveQuery(() => db.settings.toArray(), []) || [];
-
-  const settings = settingsList[0] || {
-    id: 'default',
-    departmentName: 'Computer Science and Engineering',
-    collegeName: 'Department of Computer Science and Engineering',
-    academicYear: '2026-2027',
-    workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-    periodsPerFullDay: 7,
-    periodsOnSaturday: 4,
-    lunchAfterPeriod: 4,
-  };
+  const periods = [...rawPeriods].sort((a, b) => a.periodNumber - b.periodNumber);
 
   const readiness = checkGenerationReadiness({
-    years,
+    years: sortedYears,
     sections: allSections,
     faculty,
     assignments,
@@ -310,7 +300,7 @@ export const Dashboard: React.FC = () => {
             <div className="flex items-center gap-2">
               <span className="text-xs font-bold uppercase text-slate-400 tracking-wider">Year:</span>
               <div className="flex items-center gap-1">
-                {years.map((y) => (
+                {sortedYears.map((y) => (
                   <button
                     key={y.id}
                     onClick={() => {

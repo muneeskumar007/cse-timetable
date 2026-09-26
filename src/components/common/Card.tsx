@@ -9,6 +9,7 @@ interface CardProps {
   subtitle?: string;
   action?: React.ReactNode;
   footer?: React.ReactNode;
+  onClick?: () => void;
 }
 
 export const Card: React.FC<CardProps> = ({
@@ -18,9 +19,13 @@ export const Card: React.FC<CardProps> = ({
   subtitle,
   action,
   footer,
+  onClick,
 }) => {
   return (
-    <div className={twMerge('bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden', className)}>
+    <div
+      onClick={onClick}
+      className={twMerge('bg-white rounded-xl border border-slate-200/80 shadow-sm overflow-hidden', className)}
+    >
       {(title || action) && (
         <div className="px-5 py-4 border-b border-slate-100 flex items-center justify-between gap-4">
           <div>

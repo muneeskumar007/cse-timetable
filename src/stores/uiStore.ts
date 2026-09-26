@@ -7,9 +7,12 @@ export type AppPage =
   | 'subjects'
   | 'rooms'
   | 'labs'
+  | 'fixed_assignments'
   | 'generator'
   | 'editor'
+  | 'section_verification'
   | 'faculty_timetable'
+  | 'faculty_availability'
   | 'exports'
   | 'backup'
   | 'settings';

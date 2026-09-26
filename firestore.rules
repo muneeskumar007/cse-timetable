@@ -1,0 +1,15 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Public read access for department timetable schedules and metadata
+    // This allows students, faculty, and visitors to view the published timetable
+    match /{document=**} {
+      allow read: if true;
+      // In this local-first single-operator system without mandatory user accounts,
+      // writes are permitted for the department operator.
+      // If Firebase Auth is enabled in the console, you can restrict writes to authenticated users:
+      // allow write: if request.auth != null;
+      allow write: if true;
+    }
+  }
+}

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
+import { cloudService } from '../services/cloudService';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -21,12 +21,7 @@ import type { AcademicYear, Section, Room } from '../types';
 
 export const YearsPage: React.FC = () => {
   const { setPage, setSelectedYearId, addToast } = useUiStore();
-
-  const years = useLiveQuery(() => db.academicYears.orderBy('orderIndex').toArray(), []) || [];
-  const sections = useLiveQuery(() => db.sections.toArray(), []) || [];
-  const rooms = useLiveQuery(() => db.rooms.toArray(), []) || [];
-  const assignments = useLiveQuery(() => db.subjectAssignments.toArray(), []) || [];
-  const labs = useLiveQuery(() => db.labs.toArray(), []) || [];
+  const { years, sections, rooms, assignments, labs } = useData();
 
   // Add Year State
   const [isAddYearModalOpen, setIsAddYearModalOpen] = useState(false);
@@ -54,41 +49,8 @@ export const YearsPage: React.FC = () => {
       return;
     }
 
-    const yearId = `year_${Date.now()}`;
-    await db.transaction('rw', [db.academicYears, db.sections], async () => {
-      await db.academicYears.add({
-        id: yearId,
-        yearName: cleanName,
-        orderIndex: Number(orderIndex) || years.length + 1,
-      });
-
-      // Automatically create sections A, B, C exactly as required!
-      const defaultClassrooms = rooms.filter((r) => r.roomType === 'classroom' && r.isActive);
-      const newSections: Section[] = [
-        {
-          id: `sec_${yearId}_a`,
-          yearId,
-          sectionName: 'A',
-          roomId: defaultClassrooms[0]?.id,
-          roomNumber: defaultClassrooms[0]?.roomNumber,
-        },
-        {
-          id: `sec_${yearId}_b`,
-          yearId,
-          sectionName: 'B',
-          roomId: defaultClassrooms[1]?.id,
-          roomNumber: defaultClassrooms[1]?.roomNumber,
-        },
-        {
-          id: `sec_${yearId}_c`,
-          yearId,
-          sectionName: 'C',
-          roomId: defaultClassrooms[2]?.id,
-          roomNumber: defaultClassrooms[2]?.roomNumber,
-        },
-      ];
-      await db.sections.bulkAdd(newSections);
-    });
+    const defaultClassrooms = rooms.filter((r) => r.roomType === 'classroom' && r.isActive);
+    await cloudService.years.addWithSections(cleanName, Number(orderIndex) || years.length + 1, defaultClassrooms);
 
     addToast({
       type: 'success',
@@ -106,7 +68,7 @@ export const YearsPage: React.FC = () => {
     const cleanName = yearName.trim();
     if (!cleanName) return;
 
-    await db.academicYears.update(editingYear.id, {
+    await cloudService.years.update(editingYear.id, {
       yearName: cleanName,
       orderIndex: Number(orderIndex) || editingYear.orderIndex,
     });
@@ -117,20 +79,7 @@ export const YearsPage: React.FC = () => {
 
   const handleDeleteYear = async () => {
     if (!deletingYear) return;
-    const yearId = deletingYear.id;
-
-    await db.transaction(
-      'rw',
-      [db.academicYears, db.sections, db.subjects, db.subjectAssignments, db.labs, db.timetableEntries],
-      async () => {
-        await db.academicYears.delete(yearId);
-        await db.sections.where('yearId').equals(yearId).delete();
-        await db.subjects.where('yearId').equals(yearId).delete();
-        await db.subjectAssignments.where('yearId').equals(yearId).delete();
-        await db.labs.where('yearId').equals(yearId).delete();
-        await db.timetableEntries.where('yearId').equals(yearId).delete();
-      }
-    );
+    await cloudService.years.delete(deletingYear.id);
 
     addToast({
       type: 'success',
@@ -145,10 +94,11 @@ export const YearsPage: React.FC = () => {
     if (!configuringSection) return;
 
     const matchedRoom = rooms.find((r) => r.id === selectedRoomId);
-    await db.sections.update(configuringSection.id, {
-      roomId: selectedRoomId,
-      roomNumber: matchedRoom ? matchedRoom.roomNumber : undefined,
-    });
+    await cloudService.sections.updateRoom(
+      configuringSection.id,
+      selectedRoomId,
+      matchedRoom ? matchedRoom.roomNumber : undefined
+    );
 
     addToast({
       type: 'success',

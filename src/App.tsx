@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { initializeDatabase } from './db/seedData';
+import React from 'react';
+import { DataProvider, useData } from './context/DataContext';
 import { useUiStore } from './stores/uiStore';
 import { AppLayout } from './components/layout/AppLayout';
 import { Dashboard } from './pages/Dashboard';
@@ -8,28 +8,22 @@ import { YearsPage } from './pages/YearsPage';
 import { SubjectsPage } from './pages/SubjectsPage';
 import { RoomsPage } from './pages/RoomsPage';
 import { LabsPage } from './pages/LabsPage';
+import { FixedAssignmentsPage } from './pages/FixedAssignmentsPage';
 import { GeneratorPage } from './pages/GeneratorPage';
 import { EditorPage } from './pages/EditorPage';
+import { SectionVerificationPage } from './pages/SectionVerificationPage';
 import { FacultyTimetablePage } from './pages/FacultyTimetablePage';
+import { FacultyAvailabilityPage } from './pages/FacultyAvailabilityPage';
 import { ExportsPage } from './pages/ExportsPage';
 import { BackupPage } from './pages/BackupPage';
 import { SettingsPage } from './pages/SettingsPage';
 import { Loader2 } from 'lucide-react';
 
-export const App: React.FC = () => {
+const AppContent: React.FC = () => {
   const { currentPage } = useUiStore();
-  const [isDbReady, setIsDbReady] = useState(false);
+  const { isCloudReady } = useData();
 
-  useEffect(() => {
-    initializeDatabase()
-      .then(() => setIsDbReady(true))
-      .catch((err) => {
-        console.error('Failed to initialize database:', err);
-        setIsDbReady(true);
-      });
-  }, []);
-
-  if (!isDbReady) {
+  if (!isCloudReady) {
     return (
       <div className="flex h-screen items-center justify-center bg-slate-900 text-white">
         <div className="flex flex-col items-center gap-3">
@@ -37,7 +31,7 @@ export const App: React.FC = () => {
             <Loader2 className="w-6 h-6 animate-spin text-white" />
           </div>
           <p className="text-sm font-semibold tracking-wide text-slate-200">
-            Initializing Local Database...
+            Connecting to Cloud Database...
           </p>
         </div>
       </div>
@@ -58,12 +52,18 @@ export const App: React.FC = () => {
         return <RoomsPage />;
       case 'labs':
         return <LabsPage />;
+      case 'fixed_assignments':
+        return <FixedAssignmentsPage />;
       case 'generator':
         return <GeneratorPage />;
       case 'editor':
         return <EditorPage />;
+      case 'section_verification':
+        return <SectionVerificationPage />;
       case 'faculty_timetable':
         return <FacultyTimetablePage />;
+      case 'faculty_availability':
+        return <FacultyAvailabilityPage />;
       case 'exports':
         return <ExportsPage />;
       case 'backup':
@@ -76,6 +76,14 @@ export const App: React.FC = () => {
   };
 
   return <AppLayout>{renderPage()}</AppLayout>;
+};
+
+export const App: React.FC = () => {
+  return (
+    <DataProvider>
+      <AppContent />
+    </DataProvider>
+  );
 };
 
 export default App;

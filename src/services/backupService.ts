@@ -1,5 +1,6 @@
 import { db } from '../db/database';
 import { initializeDatabase } from '../db/seedData';
+import { cloudService } from './cloudService';
 import type { BackupData } from '../types';
 
 export interface BackupValidationResult {
@@ -13,6 +14,7 @@ export interface BackupValidationResult {
     subjectCount: number;
     assignmentCount: number;
     labCount: number;
+    fixedAssignmentCount?: number;
     currentTimetableCount: number;
     versionCount: number;
     exportedAt: string;
@@ -35,6 +37,7 @@ export async function exportBackup(): Promise<void> {
     labs,
     periods,
     fixedSlots,
+    fixedAssignments,
     currentTimetable,
     generatedTimetable,
     timetableVersions,
@@ -49,6 +52,7 @@ export async function exportBackup(): Promise<void> {
     db.labs.toArray(),
     db.periodConfigs.toArray(),
     db.fixedSlots.toArray(),
+    db.fixedAssignments.toArray(),
     db.timetableEntries.toArray(),
     db.generatedTimetableEntries.toArray(),
     db.timetableVersions.toArray(),
@@ -76,6 +80,7 @@ export async function exportBackup(): Promise<void> {
     labs,
     periods,
     fixedSlots,
+    fixedAssignments,
     timetableVersions,
     currentTimetable,
     generatedTimetable,
@@ -140,6 +145,7 @@ export function validateBackup(jsonString: string): BackupValidationResult {
         subjectCount: data.subjects.length,
         assignmentCount: data.subjectAssignments.length,
         labCount: data.labs.length,
+        fixedAssignmentCount: Array.isArray(data.fixedAssignments) ? data.fixedAssignments.length : 0,
         currentTimetableCount: Array.isArray(data.currentTimetable) ? data.currentTimetable.length : 0,
         versionCount: Array.isArray(data.timetableVersions) ? data.timetableVersions.length : 0,
         exportedAt: data.exportedAt || 'Unknown date',
@@ -155,83 +161,15 @@ export function validateBackup(jsonString: string): BackupValidationResult {
 }
 
 /**
- * Restores all application data from a validated backup
+ * Restores all application data from a validated backup to Cloud Firestore and local storage
  */
 export async function restoreBackup(backupData: BackupData): Promise<void> {
-  await db.transaction(
-    'rw',
-    [
-      db.settings,
-      db.faculty,
-      db.academicYears,
-      db.sections,
-      db.rooms,
-      db.subjects,
-      db.subjectAssignments,
-      db.labs,
-      db.periodConfigs,
-      db.fixedSlots,
-      db.timetableEntries,
-      db.generatedTimetableEntries,
-      db.timetableVersions,
-    ],
-    async () => {
-      // Clear existing data
-      await Promise.all([
-        db.settings.clear(),
-        db.faculty.clear(),
-        db.academicYears.clear(),
-        db.sections.clear(),
-        db.rooms.clear(),
-        db.subjects.clear(),
-        db.subjectAssignments.clear(),
-        db.labs.clear(),
-        db.periodConfigs.clear(),
-        db.fixedSlots.clear(),
-        db.timetableEntries.clear(),
-        db.generatedTimetableEntries.clear(),
-        db.timetableVersions.clear(),
-      ]);
-
-      // Populate restored data
-      if (backupData.departmentSettings) {
-        await db.settings.add(backupData.departmentSettings);
-      }
-      if (backupData.faculty?.length) await db.faculty.bulkAdd(backupData.faculty);
-      if (backupData.years?.length) await db.academicYears.bulkAdd(backupData.years);
-      if (backupData.sections?.length) await db.sections.bulkAdd(backupData.sections);
-      if (backupData.rooms?.length) await db.rooms.bulkAdd(backupData.rooms);
-      if (backupData.subjects?.length) await db.subjects.bulkAdd(backupData.subjects);
-      if (backupData.subjectAssignments?.length) await db.subjectAssignments.bulkAdd(backupData.subjectAssignments);
-      if (backupData.labs?.length) await db.labs.bulkAdd(backupData.labs);
-      if (backupData.periods?.length) await db.periodConfigs.bulkAdd(backupData.periods);
-      if (backupData.fixedSlots?.length) await db.fixedSlots.bulkAdd(backupData.fixedSlots);
-      if (backupData.currentTimetable?.length) await db.timetableEntries.bulkAdd(backupData.currentTimetable);
-      if (backupData.generatedTimetable?.length) await db.generatedTimetableEntries.bulkAdd(backupData.generatedTimetable);
-      if (backupData.timetableVersions?.length) await db.timetableVersions.bulkAdd(backupData.timetableVersions);
-    }
-  );
+  await cloudService.restoreAll(backupData);
 }
 
 /**
- * Resets local IndexedDB project cleanly to default factory state
+ * Resets cloud and local project cleanly to default factory state
  */
 export async function resetProject(): Promise<void> {
-  await Promise.all([
-    db.settings.clear(),
-    db.faculty.clear(),
-    db.academicYears.clear(),
-    db.sections.clear(),
-    db.rooms.clear(),
-    db.subjects.clear(),
-    db.subjectAssignments.clear(),
-    db.labs.clear(),
-    db.periodConfigs.clear(),
-    db.fixedSlots.clear(),
-    db.timetableEntries.clear(),
-    db.generatedTimetableEntries.clear(),
-    db.timetableVersions.clear(),
-  ]);
-
-  await initializeDatabase();
+  await cloudService.resetProject();
 }

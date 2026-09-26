@@ -6,6 +6,7 @@ import type {
   Lab,
   Room,
   FixedSlot,
+  FixedAssignment,
   DepartmentSettings,
   PeriodConfig,
   TimetableEntry,
@@ -22,6 +23,7 @@ export interface GenerationInput {
   labs: Lab[];
   rooms: Room[];
   fixedSlots: FixedSlot[];
+  fixedAssignments?: FixedAssignment[];
   settings: DepartmentSettings;
   periods: PeriodConfig[];
   onProgress?: (step: string, progress: number) => void;
@@ -41,12 +43,13 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     labs,
     rooms,
     fixedSlots,
+    fixedAssignments = [],
     settings,
     periods,
     onProgress,
   } = input;
 
-  onProgress?.('Preparing timetable structures...', 10);
+  onProgress?.('Preparing timetable structures...', 5);
 
   const roomMap = new Map(rooms.map((r) => [r.id, r]));
   const facultyMap = new Map(faculty.map((f) => [f.facultyCode.toUpperCase(), f]));
@@ -91,7 +94,7 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
   };
 
   // STEP 1: Fixed Unit Tests
-  onProgress?.('Protecting Fixed Unit Test slots...', 20);
+  onProgress?.('Protecting Fixed Unit Test slots...', 15);
   for (const slot of fixedSlots) {
     for (const s of sections) {
       const entryId = `fixed_${slot.day}_p${slot.periodNumber}_${s.id}`;
@@ -112,18 +115,157 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
         isFixed: true,
       };
       entries.push(entry);
-      // Fixed unit test occupies the section
       occupiedSection.add(`${slot.day}_${slot.periodNumber}_${s.id}`);
     }
   }
 
-  // STEP 2: Schedule Practical Labs (3 consecutive periods)
-  onProgress?.('Scheduling Practical Labs (3 periods)...', 35);
-  const practicalLabs = labs.filter((l) => l.labType === 'practical');
+  // STEP 2: Reserve Fixed Subject, Lab, and Library Assignments
+  onProgress?.('Reserving Fixed Subject, Lab, and Library assignments...', 25);
+  const activeFixed = fixedAssignments.filter((fa) => fa.active);
+  const scheduledFixedLabIds = new Set<string>();
+  const fixedTheoryCount = new Map<string, number>(); // "secId_subjectCode" -> count
+  const sectionsWithLibrary = new Set<string>();
 
-  // Candidate blocks for 3-period practical lab on full days:
-  // Post-lunch block: P5, P6, P7 (valid Mon, Tue, Wed, Thu, Fri)
-  // Morning block: P2, P3, P4 (valid Tue, Wed, Thu, Fri - NOT Mon because P2 is Unit Test)
+  for (const fa of activeFixed) {
+    const sec = sections.find((s) => s.id === fa.sectionId);
+    if (!sec) continue;
+
+    if (fa.assignmentType === 'lab') {
+      const labId = fa.labId || fa.id;
+      const blockId = `block_fixed_${labId}_${Date.now()}`;
+      const labType = fa.labType || (fa.periodNumbers.length === 3 ? 'practical' : 'integrated');
+
+      // Check slot availability for each period in fixed lab
+      for (const p of fa.periodNumbers) {
+        if (!isSlotAvailable(fa.day, p, fa.facultyCode || '', sec.id, fa.roomId || '')) {
+          return {
+            success: false,
+            entries: [],
+            diagnostics: [
+              `Fixed Lab collision detected for "${fa.labName || 'Lab'}" (Sec ${sec.sectionName}) on ${fa.day} Period ${p}.`,
+              'Please verify that the assigned room and faculty are free from unit tests or other fixed bookings.',
+            ],
+          };
+        }
+      }
+
+      fa.periodNumbers.forEach((p, idx) => {
+        const entry: TimetableEntry = {
+          id: `fixed_lab_${fa.id}_${fa.day}_${p}`,
+          day: fa.day,
+          periodNumber: p,
+          yearId: sec.yearId,
+          sectionId: sec.id,
+          sectionName: sec.sectionName,
+          subjectCode: (fa.labName || 'LAB').substring(0, 8).toUpperCase(),
+          subjectName: fa.labName || 'Lab Practical',
+          facultyCode: fa.facultyCode || '',
+          facultyName: fa.facultyName || '',
+          roomId: fa.roomId || '',
+          roomNumber: fa.roomNumber || '',
+          entryType: labType === 'practical' ? 'practical_lab' : 'integrated_lab',
+          isFixed: true,
+          labBlockId: blockId,
+          labBlockPeriodIndex: idx,
+          labType: labType,
+        };
+        entries.push(entry);
+        markSlot(fa.day, p, fa.facultyCode || '', sec.id, fa.roomId || '');
+      });
+
+      if (fa.labId) scheduledFixedLabIds.add(fa.labId);
+      if (fa.labName) {
+        const matchedLab = labs.find(
+          (l) => l.sectionId === sec.id && l.labName.toLowerCase() === fa.labName!.toLowerCase()
+        );
+        if (matchedLab) scheduledFixedLabIds.add(matchedLab.id);
+      }
+    } else if (fa.assignmentType === 'theory') {
+      const classroom =
+        fa.roomId && roomMap.has(fa.roomId)
+          ? roomMap.get(fa.roomId)!
+          : sectionClassroomMap.get(sec.id) || rooms[0];
+
+      for (const p of fa.periodNumbers) {
+        if (!isSlotAvailable(fa.day, p, fa.facultyCode || '', sec.id, classroom.id)) {
+          return {
+            success: false,
+            entries: [],
+            diagnostics: [
+              `Fixed Theory collision detected for "${fa.subjectName || fa.subjectCode}" (Sec ${sec.sectionName}) on ${fa.day} Period ${p}.`,
+              `Slot is already occupied by a unit test or conflicting booking.`,
+            ],
+          };
+        }
+
+        const entry: TimetableEntry = {
+          id: `fixed_th_${fa.id}_${fa.day}_${p}`,
+          day: fa.day,
+          periodNumber: p,
+          yearId: sec.yearId,
+          sectionId: sec.id,
+          sectionName: sec.sectionName,
+          subjectCode: fa.subjectCode || 'SUB',
+          subjectName: fa.subjectName || 'Subject',
+          facultyCode: fa.facultyCode || '',
+          facultyName: fa.facultyName || '',
+          roomId: classroom.id,
+          roomNumber: classroom.roomNumber,
+          entryType: 'theory',
+          isFixed: true,
+        };
+        entries.push(entry);
+        markSlot(fa.day, p, fa.facultyCode || '', sec.id, classroom.id);
+
+        const subKey = `${sec.id}_${(fa.subjectCode || '').toUpperCase()}`;
+        fixedTheoryCount.set(subKey, (fixedTheoryCount.get(subKey) || 0) + 1);
+      }
+    } else if (fa.assignmentType === 'library') {
+      const room =
+        fa.roomId && roomMap.has(fa.roomId)
+          ? roomMap.get(fa.roomId)!
+          : sectionClassroomMap.get(sec.id) || rooms[0];
+
+      for (const p of fa.periodNumbers) {
+        if (!isSlotAvailable(fa.day, p, fa.facultyCode || '', sec.id, room.id)) {
+          return {
+            success: false,
+            entries: [],
+            diagnostics: [
+              `Fixed Library collision detected for Section ${sec.sectionName} on ${fa.day} Period ${p}.`,
+            ],
+          };
+        }
+
+        const entry: TimetableEntry = {
+          id: `fixed_lib_${fa.id}_${fa.day}_${p}`,
+          day: fa.day,
+          periodNumber: p,
+          yearId: sec.yearId,
+          sectionId: sec.id,
+          sectionName: sec.sectionName,
+          subjectCode: 'LIB',
+          subjectName: 'Library',
+          facultyCode: fa.facultyCode || 'LIB',
+          facultyName: fa.facultyName || 'Library / Self Study',
+          roomId: room.id,
+          roomNumber: room.roomNumber,
+          entryType: 'library',
+          isFixed: true,
+        };
+        entries.push(entry);
+        markSlot(fa.day, p, fa.facultyCode || '', sec.id, room.id);
+        sectionsWithLibrary.add(sec.id);
+      }
+    }
+  }
+
+  // STEP 3: Schedule Remaining Practical Labs (3 consecutive periods)
+  onProgress?.('Scheduling Practical Labs (3 periods)...', 38);
+  const practicalLabs = labs.filter(
+    (l) => l.labType === 'practical' && !scheduledFixedLabIds.has(l.id)
+  );
+
   const practicalCandidateBlocks: { day: DayOfWeek; periods: number[] }[] = [
     { day: 'Monday', periods: [5, 6, 7] },
     { day: 'Tuesday', periods: [5, 6, 7] },
@@ -136,12 +278,9 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     { day: 'Friday', periods: [2, 3, 4] },
   ];
 
-  // Try to place each practical lab
   for (const lab of practicalLabs) {
     let placed = false;
     const blockId = `block_${lab.id}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-
-    // Shuffle/rotate candidate blocks to distribute evenly across days
     const candidates = [...practicalCandidateBlocks].sort(() => Math.random() - 0.5);
 
     for (const cand of candidates) {
@@ -150,7 +289,6 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
       );
 
       if (allAvailable) {
-        // Place the 3 periods
         cand.periods.forEach((p, idx) => {
           const entry: TimetableEntry = {
             id: `lab_p_${lab.id}_${cand.day}_${p}`,
@@ -192,9 +330,11 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     }
   }
 
-  // STEP 3: Schedule Integrated Labs (2 consecutive periods)
+  // STEP 4: Schedule Remaining Integrated Labs (2 consecutive periods)
   onProgress?.('Scheduling Integrated Labs (2 periods)...', 50);
-  const integratedLabs = labs.filter((l) => l.labType === 'integrated');
+  const integratedLabs = labs.filter(
+    (l) => l.labType === 'integrated' && !scheduledFixedLabIds.has(l.id)
+  );
 
   const integratedCandidateBlocks: { day: DayOfWeek; periods: number[] }[] = [
     { day: 'Monday', periods: [3, 4] },
@@ -263,10 +403,54 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     }
   }
 
-  // STEP 4: Schedule Theory Classes
+  // STEP 5: Schedule Library Periods (at least 1 period per week per section)
+  onProgress?.('Assigning Library periods (1 per section)...', 60);
+  const libDayOrder: DayOfWeek[] = ['Friday', 'Thursday', 'Wednesday', 'Tuesday', 'Monday', 'Saturday'];
+
+  for (const s of sections) {
+    if (sectionsWithLibrary.has(s.id)) continue;
+    const classroom = sectionClassroomMap.get(s.id) || rooms[0];
+    let libPlaced = false;
+
+    for (const day of libDayOrder) {
+      const maxP =
+        day === 'Saturday'
+          ? settings.periodsOnSaturday || 4
+          : settings.periodsPerFullDay || 7;
+
+      // Prefer afternoon slots
+      for (let p = maxP; p >= 1; p--) {
+        if (isSlotAvailable(day, p, 'LIB', s.id, classroom.id)) {
+          const entry: TimetableEntry = {
+            id: `lib_${s.id}_${day}_${p}`,
+            day,
+            periodNumber: p,
+            yearId: s.yearId,
+            sectionId: s.id,
+            sectionName: s.sectionName,
+            subjectCode: 'LIB',
+            subjectName: 'Library',
+            facultyCode: 'LIB',
+            facultyName: 'Library / Self Study',
+            roomId: classroom.id,
+            roomNumber: classroom.roomNumber,
+            entryType: 'library',
+            isFixed: false,
+          };
+          entries.push(entry);
+          markSlot(day, p, 'LIB', s.id, classroom.id);
+          sectionsWithLibrary.add(s.id);
+          libPlaced = true;
+          break;
+        }
+      }
+      if (libPlaced) break;
+    }
+  }
+
+  // STEP 6: Schedule Theory Classes
   onProgress?.('Scheduling Theory classes...', 70);
 
-  // Flatten assignments into individual period tokens
   interface PeriodToken {
     assignment: SubjectAssignment;
     section: Section;
@@ -279,7 +463,12 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     const sec = sections.find((s) => s.id === assignment.sectionId);
     if (!sec) continue;
     const room = sectionClassroomMap.get(sec.id) || rooms[0];
-    const count = Number(assignment.weeklyPeriods) || 0;
+
+    // Subtract already placed fixed theory periods
+    const subKey = `${sec.id}_${assignment.subjectCode.toUpperCase()}`;
+    const fixedAlready = fixedTheoryCount.get(subKey) || 0;
+    const count = Math.max(0, (Number(assignment.weeklyPeriods) || 0) - fixedAlready);
+
     for (let i = 0; i < count; i++) {
       allTokens.push({
         assignment,
@@ -291,7 +480,7 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
   }
 
   // Sort tokens by MRV:
-  // Faculty with highest departmental assignments first, then subjects with higher weeklyPeriods
+  // Faculty with highest departmental load first, then subjects with higher weeklyPeriods
   const facultyLoadMap = new Map<string, number>();
   for (const t of allTokens) {
     const code = t.assignment.facultyCode.toUpperCase();
@@ -308,6 +497,11 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
   // Track daily subject placement per section to encourage even distribution
   const sectionDaySubjectCount = new Map<string, number>(); // "secId_day_subjectCode" -> count
   const facultyDayPeriodCount = new Map<string, number>(); // "facCode_day" -> count
+
+  // Morning / Afternoon distribution tracking
+  const lunchAfterPeriod = settings.lunchAfterPeriod || 4;
+  const sectionMorningSubjectCount = new Map<string, number>(); // "secId_subjectCode" -> count
+  const sectionAfternoonSubjectCount = new Map<string, number>(); // "secId_subjectCode" -> count
 
   // Available slots pool across week
   const allSlots: { day: DayOfWeek; p: number }[] = [];
@@ -334,6 +528,8 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     const token = allTokens[tokenIdx];
     const { assignment, section, classroom } = token;
     const facCode = assignment.facultyCode.toUpperCase();
+    const subCode = assignment.subjectCode.toUpperCase();
+    const secSubKey = `${section.id}_${subCode}`;
 
     // Filter available slots
     const candidateSlots: { day: DayOfWeek; p: number; score: number }[] = [];
@@ -346,6 +542,7 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
         const facDayCount = facultyDayPeriodCount.get(`${facCode}_${slot.day}`) || 0;
 
         let score = 100;
+
         // Penalize repeating the same subject on the same day
         if (existingOnDay === 0) score += 50;
         else if (existingOnDay === 1) score -= 30;
@@ -355,7 +552,36 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
         if (facDayCount < 4) score += 20;
         else score -= 40;
 
-        // Prefer earlier periods
+        // Feature 5: Morning / Afternoon Distribution Optimization
+        const isMorning = slot.p <= lunchAfterPeriod;
+        const morningCount = sectionMorningSubjectCount.get(secSubKey) || 0;
+        const afternoonCount = sectionAfternoonSubjectCount.get(secSubKey) || 0;
+
+        if (isMorning && morningCount < afternoonCount) {
+          score += 25; // Balance toward morning
+        } else if (!isMorning && afternoonCount < morningCount) {
+          score += 25; // Balance toward afternoon
+        } else if (isMorning && morningCount >= afternoonCount + 2) {
+          score -= 30; // Prevent heavy morning clustering
+        } else if (!isMorning && afternoonCount >= morningCount + 2) {
+          score -= 30; // Prevent heavy afternoon clustering
+        }
+
+        // Feature 6: Faculty Non-Consecutive Teaching Optimization
+        const hasPrevPeriod = occupiedFaculty.has(`${slot.day}_${slot.p - 1}_${facCode}`);
+        const hasNextPeriod = occupiedFaculty.has(`${slot.day}_${slot.p + 1}_${facCode}`);
+        const hasTwoPrevPeriods = occupiedFaculty.has(`${slot.day}_${slot.p - 2}_${facCode}`);
+        const hasTwoNextPeriods = occupiedFaculty.has(`${slot.day}_${slot.p + 2}_${facCode}`);
+
+        if (hasPrevPeriod && (hasTwoPrevPeriods || hasNextPeriod)) {
+          score -= 50; // Heavy penalty for 3+ consecutive periods
+        } else if (hasNextPeriod && hasTwoNextPeriods) {
+          score -= 50; // Heavy penalty for 3+ consecutive periods
+        } else if (hasPrevPeriod || hasNextPeriod) {
+          score -= 15; // Moderate penalty for back-to-back teaching
+        }
+
+        // Slight preference for earlier periods
         score += (8 - slot.p);
 
         candidateSlots.push({ day: slot.day, p: slot.p, score });
@@ -366,7 +592,6 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     candidateSlots.sort((a, b) => b.score - a.score);
 
     for (const cand of candidateSlots) {
-      // Place
       const entryId = `th_${assignment.id}_${token.tokenIndex}_${cand.day}_${cand.p}`;
       const entry: TimetableEntry = {
         id: entryId,
@@ -393,6 +618,13 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
       const facDayKey = `${facCode}_${cand.day}`;
       facultyDayPeriodCount.set(facDayKey, (facultyDayPeriodCount.get(facDayKey) || 0) + 1);
 
+      const isMorning = cand.p <= lunchAfterPeriod;
+      if (isMorning) {
+        sectionMorningSubjectCount.set(secSubKey, (sectionMorningSubjectCount.get(secSubKey) || 0) + 1);
+      } else {
+        sectionAfternoonSubjectCount.set(secSubKey, (sectionAfternoonSubjectCount.get(secSubKey) || 0) + 1);
+      }
+
       if (solveTokens(tokenIdx + 1)) {
         return true;
       }
@@ -402,6 +634,12 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
       unmarkSlot(cand.day, cand.p, facCode, section.id, classroom.id);
       sectionDaySubjectCount.set(daySubKey, (sectionDaySubjectCount.get(daySubKey) || 1) - 1);
       facultyDayPeriodCount.set(facDayKey, (facultyDayPeriodCount.get(facDayKey) || 1) - 1);
+
+      if (isMorning) {
+        sectionMorningSubjectCount.set(secSubKey, (sectionMorningSubjectCount.get(secSubKey) || 1) - 1);
+      } else {
+        sectionAfternoonSubjectCount.set(secSubKey, (sectionAfternoonSubjectCount.get(secSubKey) || 1) - 1);
+      }
     }
 
     return false;
@@ -424,7 +662,7 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     };
   }
 
-  // Combine fixed slots, labs, and theory
+  // Combine fixed slots, fixed assignments, labs, library, and theory
   entries.push(...assignedEntries);
 
   onProgress?.('Validating final timetable constraints...', 90);
@@ -432,6 +670,7 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     assignments,
     labs,
     fixedSlots,
+    fixedAssignments,
     settings,
     periods,
   });

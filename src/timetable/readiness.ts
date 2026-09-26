@@ -6,6 +6,7 @@ import type {
   Lab,
   Room,
   FixedSlot,
+  FixedAssignment,
   DepartmentSettings,
 } from '../types';
 
@@ -39,9 +40,10 @@ export function checkGenerationReadiness(params: {
   labs: Lab[];
   rooms: Room[];
   fixedSlots: FixedSlot[];
+  fixedAssignments?: FixedAssignment[];
   settings: DepartmentSettings;
 }): ReadinessReport {
-  const { years, sections, faculty, assignments, labs, rooms, fixedSlots, settings } = params;
+  const { years, sections, faculty, assignments, labs, rooms, fixedSlots, fixedAssignments = [], settings } = params;
   const checks: ReadinessCheckItem[] = [];
 
   // 1. Years & Sections Check
@@ -229,7 +231,7 @@ export function checkGenerationReadiness(params: {
     const labPeriods = labs
       .filter((l) => l.sectionId === s.id)
       .reduce((sum, l) => sum + (l.labType === 'practical' ? 3 : 2), 0);
-    const totalRequired = theoryPeriods + labPeriods;
+    const totalRequired = theoryPeriods + labPeriods + 1; // Includes mandatory weekly Library period
 
     if (totalRequired > availableSlotsPerSection) {
       capacityFailed = true;
@@ -238,7 +240,7 @@ export function checkGenerationReadiness(params: {
         category: 'Capacity & Settings',
         name: `Capacity: Sec ${s.sectionName}`,
         status: 'fail',
-        message: `Sec ${s.sectionName} requires ${totalRequired} periods/week, but only ${availableSlotsPerSection} slots are available (Total: ${totalSlotsPerWeek} - Fixed: ${fixedSlotCount}).`,
+        message: `Sec ${s.sectionName} requires ${totalRequired} periods/week (including Library), but only ${availableSlotsPerSection} slots are available (Total: ${totalSlotsPerWeek} - Fixed: ${fixedSlotCount}).`,
       });
     }
   }

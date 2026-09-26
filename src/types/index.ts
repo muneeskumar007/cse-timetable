@@ -111,7 +111,33 @@ export interface FixedSlot {
   description: string;
 }
 
-export type EntryType = 'theory' | 'practical_lab' | 'integrated_lab' | 'unit_test';
+export type FixedAssignmentType = 'theory' | 'lab' | 'library';
+
+export interface FixedAssignment {
+  id: string;
+  assignmentType: FixedAssignmentType;
+  yearId: string;
+  sectionId: string;
+  sectionName?: string;
+  subjectCode?: string;
+  subjectName?: string;
+  labId?: string;
+  labName?: string;
+  labType?: LabType;
+  facultyCode?: string;
+  facultyName?: string;
+  roomId?: string;
+  roomNumber?: string;
+  day: DayOfWeek;
+  startPeriodNumber: number;
+  periodNumbers: number[];
+  isFixed: boolean;
+  active: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export type EntryType = 'theory' | 'practical_lab' | 'integrated_lab' | 'unit_test' | 'library';
 
 export interface TimetableEntry {
   id: string;
@@ -140,8 +166,23 @@ export interface TimetableVersion {
   timestamp: string;
   isCurrent: boolean;
   isGenerated: boolean;
+  isPublished?: boolean;
+  status?: 'DRAFT' | 'FINAL' | 'PUBLISHED';
   entries: TimetableEntry[];
 }
+
+export interface AppMetadata {
+  id: string;
+  currentPublishedVersionId: string | null;
+  publishedAt: string | null;
+  publishedByName?: string;
+  schemaVersion: string;
+  lastGeneratedAt?: string | null;
+  lastSavedAt?: string | null;
+  status: 'DRAFT' | 'SAVED' | 'PUBLISHED';
+}
+
+export type CloudStatus = 'connected' | 'syncing' | 'saved' | 'offline' | 'fallback';
 
 export interface DepartmentSettings {
   id: string;
@@ -167,7 +208,15 @@ export type ValidationErrorType =
   | 'SATURDAY_RESTRICTION'
   | 'UNKNOWN_FACULTY'
   | 'CAPACITY_OVERFLOW'
-  | 'MISSING_DATA';
+  | 'MISSING_DATA'
+  | 'FIXED_ASSIGNMENT_CONFLICT'
+  | 'FIXED_THEORY_CONFLICT'
+  | 'FIXED_FACULTY_CONFLICT'
+  | 'FIXED_ROOM_CONFLICT'
+  | 'FIXED_SECTION_CONFLICT'
+  | 'FIXED_LIBRARY_CONFLICT'
+  | 'LIBRARY_REQUIREMENT'
+  | 'FACULTY_CONSECUTIVE';
 
 export interface ValidationError {
   type: ValidationErrorType;
@@ -211,6 +260,112 @@ export interface GenerationProgress {
   diagnostics?: string[];
 }
 
+// Verification and Availability Types
+export type VerificationStatus = 'complete' | 'warning' | 'error';
+
+export interface SubjectFrequencySummary {
+  subjectCode: string;
+  subjectName: string;
+  facultyCode: string;
+  facultyName: string;
+  requiredPeriods: number;
+  assignedPeriods: number;
+  difference: number; // assigned - required (0 = complete, negative = missing, positive = over-assigned)
+  occurrences: {
+    day: DayOfWeek;
+    periodNumber: number;
+    roomNumber: string;
+    isFixed: boolean;
+  }[];
+  status: VerificationStatus;
+}
+
+export interface LabFrequencySummary {
+  labId?: string;
+  labName: string;
+  labType: LabType;
+  facultyCode: string;
+  facultyName: string;
+  roomNumber: string;
+  requiredBlocks: number; // 1
+  assignedBlocks: number;
+  requiredPeriods: number; // 3 or 2
+  assignedPeriods: number;
+  occurrences: {
+    day: DayOfWeek;
+    periodNumbers: number[];
+    roomNumber: string;
+    isFixed: boolean;
+  }[];
+  status: VerificationStatus;
+}
+
+export interface LibraryFrequencySummary {
+  requiredPeriods: number; // 1 per section/week
+  assignedPeriods: number;
+  occurrences: {
+    day: DayOfWeek;
+    periodNumber: number;
+    roomNumber: string;
+    facultyCode?: string;
+    facultyName?: string;
+    isFixed: boolean;
+  }[];
+  status: VerificationStatus;
+}
+
+export interface SectionVerification {
+  yearId: string;
+  yearName: string;
+  sectionId: string;
+  sectionName: string;
+  totalAvailableSlots: number;
+  assignedSlots: number;
+  unassignedSlots: number;
+  unassignedPeriodsList: { day: DayOfWeek; periodNumber: number }[];
+  fixedSlotsCount: number;
+  unitTestSlotsCount: number;
+  labSlotsCount: number;
+  librarySlotsCount: number;
+  theorySlotsCount: number;
+  subjectSummaries: SubjectFrequencySummary[];
+  labSummaries: LabFrequencySummary[];
+  librarySummary: LibraryFrequencySummary;
+  fixedAssignments: FixedAssignment[];
+  errors: ValidationError[];
+  warnings: ValidationError[];
+  status: VerificationStatus;
+  isComplete: boolean;
+}
+
+export interface DepartmentVerificationSummary {
+  totalSections: number;
+  completeSections: number;
+  warningSections: number;
+  errorSections: number;
+  sectionVerifications: SectionVerification[];
+}
+
+export interface FacultyFreeBusySlot {
+  faculty: Faculty;
+  isFree: boolean;
+  assignedEntry?: TimetableEntry;
+  workload: {
+    required: number;
+    assigned: number;
+    remaining: number;
+    status: WorkloadStatus;
+  };
+}
+
+export interface FacultySlotAvailability {
+  day: DayOfWeek;
+  periodNumber: number;
+  periodConfig?: PeriodConfig;
+  freeFaculty: FacultyFreeBusySlot[];
+  busyFaculty: FacultyFreeBusySlot[];
+}
+
 export interface BackupData {
   version: string;
   exportedAt: string;
@@ -224,6 +379,7 @@ export interface BackupData {
   labs: Lab[];
   periods: PeriodConfig[];
   fixedSlots: FixedSlot[];
+  fixedAssignments?: FixedAssignment[];
   timetableVersions: TimetableVersion[];
   currentTimetable: TimetableEntry[];
   generatedTimetable: TimetableEntry[];

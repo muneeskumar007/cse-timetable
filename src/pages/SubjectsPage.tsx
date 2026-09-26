@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
+import { cloudService } from '../services/cloudService';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Modal } from '../components/common/Modal';
@@ -22,26 +22,18 @@ import {
   CheckCircle2,
   AlertTriangle,
 } from 'lucide-react';
-import type { SubjectAssignment } from '../types';
+import type { SubjectAssignment, Subject } from '../types';
 
 export const SubjectsPage: React.FC = () => {
   const { selectedYearId, setSelectedYearId, addToast } = useUiStore();
+  const { years, sections: allSections, assignments: allAssignments, faculty } = useData();
 
-  const years = useLiveQuery(() => db.academicYears.orderBy('orderIndex').toArray(), []) || [];
-  const activeYearId = selectedYearId || years[0]?.id;
-  const currentYear = years.find((y) => y.id === activeYearId) || years[0];
+  const sortedYears = [...years].sort((a, b) => a.orderIndex - b.orderIndex);
+  const activeYearId = selectedYearId || sortedYears[0]?.id;
+  const currentYear = sortedYears.find((y) => y.id === activeYearId) || sortedYears[0];
 
-  const sections = useLiveQuery(
-    () => (activeYearId ? db.sections.where('yearId').equals(activeYearId).toArray() : []),
-    [activeYearId]
-  ) || [];
-
-  const assignments = useLiveQuery(
-    () => (activeYearId ? db.subjectAssignments.where('yearId').equals(activeYearId).toArray() : []),
-    [activeYearId]
-  ) || [];
-
-  const faculty = useLiveQuery(() => db.faculty.toArray(), []) || [];
+  const sections = allSections.filter((s) => s.yearId === activeYearId);
+  const assignments = allAssignments.filter((a) => a.yearId === activeYearId);
   const facultyMap = new Map(faculty.map((f) => [f.facultyCode.toUpperCase(), f.facultyName]));
 
   // Add / Edit Assignment State
@@ -111,7 +103,7 @@ export const SubjectsPage: React.FC = () => {
         return;
       }
 
-      await db.subjectAssignments.add({
+      await cloudService.assignments.add({
         id: `sa_${Date.now()}`,
         yearId: currentYear.id,
         sectionId: sec.id,
@@ -129,7 +121,7 @@ export const SubjectsPage: React.FC = () => {
         message: `${cleanSubCode} mapped to Sec ${sec.sectionName} (${facName}).`,
       });
     } else {
-      await db.subjectAssignments.update(editingAssignment.id, {
+      await cloudService.assignments.update(editingAssignment.id, {
         sectionId: sec.id,
         sectionName: sec.sectionName,
         subjectCode: cleanSubCode,
@@ -151,7 +143,7 @@ export const SubjectsPage: React.FC = () => {
 
   const handleDeleteAssignment = async () => {
     if (!deletingAssignment) return;
-    await db.subjectAssignments.delete(deletingAssignment.id);
+    await cloudService.assignments.delete(deletingAssignment.id);
     addToast({
       type: 'success',
       title: 'Assignment Deleted',
@@ -190,41 +182,34 @@ export const SubjectsPage: React.FC = () => {
     setIsImporting(true);
 
     try {
-      await db.transaction('rw', [db.subjects, db.subjectAssignments], async () => {
-        // REPLACEMENT SEMANTICS: replace subject assignments for this year
-        await db.subjectAssignments.where('yearId').equals(currentYear.id).delete();
-        await db.subjects.where('yearId').equals(currentYear.id).delete();
+      // REPLACEMENT SEMANTICS: replace subject assignments for this year
+      const newSubjects: Subject[] = importResult.uniqueSubjects.map((s) => ({
+        id: `sub_${currentYear.id}_${s.subjectCode}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+        yearId: currentYear.id,
+        subjectCode: s.subjectCode,
+        subjectName: s.subjectName,
+      }));
 
-        // Add unique subjects
-        const newSubjects = importResult.uniqueSubjects.map((s) => ({
-          id: `sub_${currentYear.id}_${s.subjectCode}_${Date.now()}`,
-          yearId: currentYear.id,
-          subjectCode: s.subjectCode,
-          subjectName: s.subjectName,
-        }));
-        await db.subjects.bulkAdd(newSubjects);
-
-        // Map sectionName to actual sectionId
-        const newAssignments: SubjectAssignment[] = [];
-        for (const va of importResult.validAssignments) {
-          const sec = sections.find((s) => s.sectionName.toUpperCase() === va.sectionName.toUpperCase());
-          if (sec) {
-            newAssignments.push({
-              id: `sa_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-              yearId: currentYear.id,
-              sectionId: sec.id,
-              sectionName: sec.sectionName,
-              subjectCode: va.subjectCode,
-              subjectName: va.subjectName,
-              facultyCode: va.facultyCode,
-              facultyName: va.facultyName,
-              weeklyPeriods: va.weeklyPeriods,
-            });
-          }
+      // Map sectionName to actual sectionId
+      const newAssignments: SubjectAssignment[] = [];
+      for (const va of importResult.validAssignments) {
+        const sec = sections.find((s) => s.sectionName.toUpperCase() === va.sectionName.toUpperCase());
+        if (sec) {
+          newAssignments.push({
+            id: `sa_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
+            yearId: currentYear.id,
+            sectionId: sec.id,
+            sectionName: sec.sectionName,
+            subjectCode: va.subjectCode,
+            subjectName: va.subjectName,
+            facultyCode: va.facultyCode,
+            facultyName: va.facultyName,
+            weeklyPeriods: va.weeklyPeriods,
+          });
         }
+      }
 
-        await db.subjectAssignments.bulkAdd(newAssignments);
-      });
+      await cloudService.assignments.replaceForYear(currentYear.id, newAssignments, newSubjects);
 
       addToast({
         type: 'success',
@@ -244,7 +229,7 @@ export const SubjectsPage: React.FC = () => {
     <div className="space-y-6">
       {/* Year Selector Tabs */}
       <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto">
-        {years.map((year) => {
+        {sortedYears.map((year) => {
           const isSelected = (currentYear?.id || '') === year.id;
           return (
             <button

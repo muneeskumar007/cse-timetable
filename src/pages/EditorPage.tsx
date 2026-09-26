@@ -1,6 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -32,6 +31,8 @@ import {
   AlertTriangle,
   Clock,
   CheckCircle2,
+  Lock,
+  Library,
 } from 'lucide-react';
 import type { TimetableEntry, PeriodConfig, DayOfWeek, TimetableVersion } from '../types';
 import { ALL_DAYS } from '../types';
@@ -48,7 +49,7 @@ const DroppableCell: React.FC<CellProps> = ({ day, period, entry, isSaturdayClos
   const cellId = `cell_${day}_${period.periodNumber}`;
   const { setNodeRef, isOver } = useDroppable({
     id: cellId,
-    disabled: isSaturdayClosed || isLunchDivider || entry?.entryType === 'unit_test',
+    disabled: isSaturdayClosed || isLunchDivider || entry?.entryType === 'unit_test' || entry?.isFixed,
     data: { day, periodNumber: period.periodNumber },
   });
 
@@ -83,11 +84,13 @@ const DraggableEntry: React.FC<{ entry: TimetableEntry; isDraggingOverlay?: bool
   isDraggingOverlay = false,
 }) => {
   const isUnitTest = entry.entryType === 'unit_test';
+  const isFixed = entry.isFixed || isUnitTest;
   const isLab = entry.entryType === 'practical_lab' || entry.entryType === 'integrated_lab';
+  const isLib = entry.entryType === 'library';
 
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: entry.id,
-    disabled: isUnitTest,
+    disabled: isFixed,
     data: { entry },
   });
 
@@ -99,6 +102,34 @@ const DraggableEntry: React.FC<{ entry: TimetableEntry; isDraggingOverlay?: bool
           <span>UNIT TEST</span>
         </div>
         <span className="text-[10px] text-rose-500 block mt-0.5">Fixed (Locked)</span>
+      </div>
+    );
+  }
+
+  if (entry.isFixed) {
+    return (
+      <div className="p-2 rounded-lg bg-indigo-50/70 border border-indigo-200 text-indigo-950 shadow-xs select-none">
+        <div className="flex items-center justify-between gap-1 mb-1">
+          <span className="font-bold text-xs leading-tight line-clamp-1 text-indigo-900">
+            {entry.subjectName}
+          </span>
+          <Lock className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
+        </div>
+        <div className="text-[10px] text-indigo-600 font-medium">
+          {isLab ? 'Fixed Lab Block' : isLib ? 'Fixed Library Period' : 'Fixed Theory Assignment'}
+        </div>
+        {entry.facultyCode && (
+          <div className="flex items-center gap-1 text-[10px] text-slate-500 mt-1">
+            <User className="w-3 h-3 text-slate-400" />
+            <span className="font-mono">{entry.facultyCode}</span>
+          </div>
+        )}
+        {entry.roomNumber && (
+          <div className="flex items-center gap-1 text-[10px] text-slate-500">
+            <MapPin className="w-3 h-3 text-slate-400" />
+            <span>Rm {entry.roomNumber}</span>
+          </div>
+        )}
       </div>
     );
   }
@@ -131,6 +162,31 @@ const DraggableEntry: React.FC<{ entry: TimetableEntry; isDraggingOverlay?: bool
         <div className="flex items-center gap-1 text-[10px] text-purple-800 font-medium">
           <MapPin className="w-3 h-3 text-purple-500" />
           <span>{entry.roomNumber}</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (isLib) {
+    return (
+      <div
+        ref={setNodeRef}
+        {...listeners}
+        {...attributes}
+        className={`p-2 rounded-lg bg-amber-50 border border-amber-300 text-amber-950 cursor-grab active:cursor-grabbing shadow-xs transition-all select-none hover:border-amber-400 hover:shadow-sm ${
+          isDragging ? 'opacity-40 ring-2 ring-amber-400' : ''
+        } ${isDraggingOverlay ? 'shadow-xl rotate-2 ring-2 ring-amber-600' : ''}`}
+      >
+        <div className="flex items-center justify-between gap-1">
+          <span className="font-mono font-bold text-xs text-amber-800">LIB</span>
+          <GripVertical className="w-3 h-3 text-amber-400 flex-shrink-0" />
+        </div>
+        <p className="font-semibold text-amber-900 text-[11px] leading-snug line-clamp-1 mt-0.5">
+          Library Period
+        </p>
+        <div className="flex items-center gap-1 text-[10px] text-amber-700 mt-1">
+          <Library className="w-3 h-3 text-amber-500" />
+          <span>Self Study / Research</span>
         </div>
       </div>
     );
@@ -178,35 +234,28 @@ export const EditorPage: React.FC = () => {
     restoreVersion,
   } = useTimetableStore();
 
-  const years = useLiveQuery(() => db.academicYears.orderBy('orderIndex').toArray(), []) || [];
-  const activeYearId = selectedYearId || years[0]?.id;
-  const currentYear = years.find((y) => y.id === activeYearId) || years[0];
+  const {
+    years,
+    sections: allSections,
+    periods,
+    entries: dbEntries,
+    fixedSlots,
+    fixedAssignments,
+    assignments,
+    labs,
+    versions: rawVersions,
+    settings,
+  } = useData();
 
-  const sections = useLiveQuery(
-    () => (activeYearId ? db.sections.where('yearId').equals(activeYearId).toArray() : []),
-    [activeYearId]
-  ) || [];
+  const sortedYears = [...years].sort((a, b) => a.orderIndex - b.orderIndex);
+  const activeYearId = selectedYearId || sortedYears[0]?.id;
+  const currentYear = sortedYears.find((y) => y.id === activeYearId) || sortedYears[0];
+
+  const sections = allSections.filter((s) => s.yearId === activeYearId);
   const activeSectionId = selectedSectionId || sections[0]?.id;
   const currentSection = sections.find((s) => s.id === activeSectionId) || sections[0];
 
-  const periods = useLiveQuery(() => db.periodConfigs.orderBy('periodNumber').toArray(), []) || [];
-  const dbEntries = useLiveQuery(() => db.timetableEntries.toArray(), []) || [];
-  const fixedSlots = useLiveQuery(() => db.fixedSlots.toArray(), []) || [];
-  const assignments = useLiveQuery(() => db.subjectAssignments.toArray(), []) || [];
-  const labs = useLiveQuery(() => db.labs.toArray(), []) || [];
-  const versions = useLiveQuery(() => db.timetableVersions.orderBy('versionNumber').reverse().toArray(), []) || [];
-  const settingsList = useLiveQuery(() => db.settings.toArray(), []) || [];
-
-  const settings = settingsList[0] || {
-    id: 'default',
-    departmentName: 'Computer Science and Engineering',
-    collegeName: 'Department of Computer Science and Engineering',
-    academicYear: '2026-2027',
-    workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-    periodsPerFullDay: 7,
-    periodsOnSaturday: 4,
-    lunchAfterPeriod: 4,
-  };
+  const versions = [...rawVersions].sort((a, b) => b.versionNumber - a.versionNumber);
 
   // Synchronize staged entries from db if empty
   useEffect(() => {
@@ -263,6 +312,7 @@ export const EditorPage: React.FC = () => {
       assignments,
       labs,
       fixedSlots,
+      fixedAssignments,
       settings,
       periods,
     };
@@ -468,12 +518,12 @@ export const EditorPage: React.FC = () => {
                 Academic Year
               </label>
               <div className="flex items-center gap-1.5">
-                {years.map((y) => (
+                {sortedYears.map((y) => (
                   <button
                     key={y.id}
                     onClick={() => {
                       setSelectedYearId(y.id);
-                      const s = sections.filter((sec) => sec.yearId === y.id);
+                      const s = allSections.filter((sec) => sec.yearId === y.id);
                       if (s[0]) setSelectedSectionId(s[0].id);
                     }}
                     className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${

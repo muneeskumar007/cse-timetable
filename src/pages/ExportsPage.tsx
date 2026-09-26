@@ -1,6 +1,5 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { exportTimetableToPdf } from '../services/pdfService';
@@ -19,24 +18,10 @@ import {
 
 export const ExportsPage: React.FC = () => {
   const { addToast } = useUiStore();
+  const { years, sections, faculty, entries, periods: rawPeriods, settings } = useData();
 
-  const years = useLiveQuery(() => db.academicYears.orderBy('orderIndex').toArray(), []) || [];
-  const sections = useLiveQuery(() => db.sections.toArray(), []) || [];
-  const faculty = useLiveQuery(() => db.faculty.toArray(), []) || [];
-  const entries = useLiveQuery(() => db.timetableEntries.toArray(), []) || [];
-  const periods = useLiveQuery(() => db.periodConfigs.orderBy('periodNumber').toArray(), []) || [];
-  const settingsList = useLiveQuery(() => db.settings.toArray(), []) || [];
-
-  const settings = settingsList[0] || {
-    id: 'default',
-    departmentName: 'Department of Computer Science and Engineering',
-    collegeName: 'College of Engineering',
-    academicYear: '2026-2027',
-    workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-    periodsPerFullDay: 7,
-    periodsOnSaturday: 4,
-    lunchAfterPeriod: 4,
-  };
+  const sortedYears = [...years].sort((a, b) => a.orderIndex - b.orderIndex);
+  const periods = [...rawPeriods].sort((a, b) => a.periodNumber - b.periodNumber);
 
   const [selectedYearId, setSelectedYearId] = useState<string>('');
   const [selectedSectionId, setSelectedSectionId] = useState<string>('');
@@ -44,9 +29,9 @@ export const ExportsPage: React.FC = () => {
 
   // Initial defaults
   React.useEffect(() => {
-    if (years[0] && !selectedYearId) setSelectedYearId(years[0].id);
+    if (sortedYears[0] && !selectedYearId) setSelectedYearId(sortedYears[0].id);
     if (faculty[0] && !selectedFacultyCode) setSelectedFacultyCode(faculty[0].facultyCode);
-  }, [years, faculty, selectedYearId, selectedFacultyCode]);
+  }, [sortedYears, faculty, selectedYearId, selectedFacultyCode]);
 
   React.useEffect(() => {
     const yearSections = sections.filter((s) => s.yearId === selectedYearId);
@@ -55,7 +40,7 @@ export const ExportsPage: React.FC = () => {
 
   // Export handlers
   const handleExportSection = (format: 'pdf' | 'excel') => {
-    const year = years.find((y) => y.id === selectedYearId);
+    const year = sortedYears.find((y) => y.id === selectedYearId);
     const sec = sections.find((s) => s.id === selectedSectionId);
     if (!year || !sec) return;
 
@@ -120,7 +105,7 @@ export const ExportsPage: React.FC = () => {
 
   const handleBulkExportClasses = (format: 'pdf' | 'excel') => {
     // Generates export for each section
-    for (const year of years) {
+    for (const year of sortedYears) {
       const yearSecs = sections.filter((s) => s.yearId === year.id);
       for (const sec of yearSecs) {
         const filtered = entries.filter((e) => e.sectionId === sec.id);

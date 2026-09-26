@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
+import { cloudService } from '../services/cloudService';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -12,10 +12,7 @@ import type { Room, RoomType } from '../types';
 
 export const RoomsPage: React.FC = () => {
   const { addToast } = useUiStore();
-
-  const rooms = useLiveQuery(() => db.rooms.toArray(), []) || [];
-  const sections = useLiveQuery(() => db.sections.toArray(), []) || [];
-  const labs = useLiveQuery(() => db.labs.toArray(), []) || [];
+  const { rooms, sections, labs } = useData();
 
   // Add / Edit State
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -60,7 +57,7 @@ export const RoomsPage: React.FC = () => {
         return;
       }
 
-      await db.rooms.add({
+      await cloudService.rooms.add({
         id: `room_${Date.now()}`,
         roomNumber: cleanNumber,
         roomName: cleanName,
@@ -71,7 +68,7 @@ export const RoomsPage: React.FC = () => {
 
       addToast({ type: 'success', title: 'Room Added', message: `Room ${cleanNumber} created.` });
     } else {
-      await db.rooms.update(editingRoom.id, {
+      await cloudService.rooms.update(editingRoom.id, {
         roomNumber: cleanNumber,
         roomName: cleanName,
         roomType,
@@ -79,8 +76,12 @@ export const RoomsPage: React.FC = () => {
       });
 
       // Update roomNumber on sections and labs mapped to this room
-      await db.sections.where('roomId').equals(editingRoom.id).modify({ roomNumber: cleanNumber });
-      await db.labs.where('roomId').equals(editingRoom.id).modify({ roomNumber: cleanNumber });
+      for (const s of sections.filter((s) => s.roomId === editingRoom.id)) {
+        await cloudService.sections.updateRoom(s.id, editingRoom.id, cleanNumber);
+      }
+      for (const l of labs.filter((l) => l.roomId === editingRoom.id)) {
+        await cloudService.labs.update(l.id, { roomNumber: cleanNumber });
+      }
 
       addToast({ type: 'success', title: 'Room Updated', message: `Room ${cleanNumber} updated.` });
     }
@@ -104,7 +105,7 @@ export const RoomsPage: React.FC = () => {
       });
     }
 
-    await db.rooms.delete(roomId);
+    await cloudService.rooms.delete(roomId);
     addToast({ type: 'success', title: 'Room Removed', message: `Room ${deletingRoom.roomNumber} deleted.` });
     setDeletingRoom(null);
   };

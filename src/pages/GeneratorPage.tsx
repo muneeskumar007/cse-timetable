@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { db } from '../db/database';
+import { useData } from '../context/DataContext';
+import { cloudService } from '../services/cloudService';
 import { Card } from '../components/common/Card';
 import { Button } from '../components/common/Button';
 import { Badge } from '../components/common/Badge';
@@ -25,29 +25,7 @@ import type { TimetableVersion } from '../types';
 export const GeneratorPage: React.FC = () => {
   const { setPage, addToast } = useUiStore();
   const { setGenerating, isGenerating, setDiagnostics } = useTimetableStore();
-
-  const years = useLiveQuery(() => db.academicYears.orderBy('orderIndex').toArray(), []) || [];
-  const sections = useLiveQuery(() => db.sections.toArray(), []) || [];
-  const faculty = useLiveQuery(() => db.faculty.toArray(), []) || [];
-  const assignments = useLiveQuery(() => db.subjectAssignments.toArray(), []) || [];
-  const labs = useLiveQuery(() => db.labs.toArray(), []) || [];
-  const rooms = useLiveQuery(() => db.rooms.toArray(), []) || [];
-  const fixedSlots = useLiveQuery(() => db.fixedSlots.toArray(), []) || [];
-  const settingsList = useLiveQuery(() => db.settings.toArray(), []) || [];
-  const periods = useLiveQuery(() => db.periodConfigs.orderBy('periodNumber').toArray(), []) || [];
-
-  const settings = settingsList[0] || {
-    id: 'default',
-    departmentName: 'Computer Science and Engineering',
-    collegeName: 'Department of Computer Science and Engineering',
-    academicYear: '2026-2027',
-    workingDays: ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'],
-    periodsPerFullDay: 7,
-    periodsOnSaturday: 4,
-    lunchAfterPeriod: 4,
-  };
-
-  const readiness = checkGenerationReadiness({
+  const {
     years,
     sections,
     faculty,
@@ -55,6 +33,24 @@ export const GeneratorPage: React.FC = () => {
     labs,
     rooms,
     fixedSlots,
+    fixedAssignments,
+    settings,
+    periods,
+    versions,
+  } = useData();
+
+  const sortedYears = [...years].sort((a, b) => a.orderIndex - b.orderIndex);
+  const sortedPeriods = [...periods].sort((a, b) => a.periodNumber - b.periodNumber);
+
+  const readiness = checkGenerationReadiness({
+    years: sortedYears,
+    sections,
+    faculty,
+    assignments,
+    labs,
+    rooms,
+    fixedSlots,
+    fixedAssignments,
     settings,
   });
 
@@ -82,15 +78,16 @@ export const GeneratorPage: React.FC = () => {
     try {
       const result = await runGenerationAsync(
         {
-          years,
+          years: sortedYears,
           sections,
           faculty,
           assignments,
           labs,
           rooms,
           fixedSlots,
+          fixedAssignments,
           settings,
-          periods,
+          periods: sortedPeriods,
         },
         (step, progress) => {
           setCurrentStep(step);
@@ -99,33 +96,9 @@ export const GeneratorPage: React.FC = () => {
       );
 
       if (result.success && result.entries.length > 0) {
-        // Save to IndexedDB
-        await db.transaction(
-          'rw',
-          [db.timetableEntries, db.generatedTimetableEntries, db.timetableVersions],
-          async () => {
-            // Save generated pristine copy
-            await db.generatedTimetableEntries.clear();
-            await db.generatedTimetableEntries.bulkAdd(result.entries);
-
-            // Save active current copy
-            await db.timetableEntries.clear();
-            await db.timetableEntries.bulkAdd(result.entries);
-
-            // Create Version 1 snapshot
-            const versionCount = await db.timetableVersions.count();
-            const newVersion: TimetableVersion = {
-              id: `ver_${Date.now()}`,
-              versionNumber: versionCount + 1,
-              name: `Generated Schedule (V${versionCount + 1})`,
-              timestamp: new Date().toLocaleString(),
-              isCurrent: true,
-              isGenerated: true,
-              entries: result.entries,
-            };
-            await db.timetableVersions.add(newVersion);
-          }
-        );
+        // Save to Firebase Cloud & mirror locally
+        await cloudService.timetable.saveGenerated(result.entries);
+        await cloudService.timetable.saveCurrent(result.entries, versions.length);
 
         setGenerationSuccess(true);
         addToast({
@@ -319,13 +292,15 @@ export const GeneratorPage: React.FC = () => {
               Priority 1: Hard Constraints (Zero Tolerance)
             </span>
             <p>1. Fixed Unit Tests protected (Monday P1-P2 & Saturday P1-P2).</p>
-            <p>2. Zero faculty clashes across all years and sections.</p>
-            <p>3. Zero room double-bookings for classrooms or lab rooms.</p>
-            <p>4. Practical labs = exactly 3 consecutive periods, once/week.</p>
-            <p>5. Integrated labs = exactly 2 consecutive periods, once/week.</p>
-            <p>6. No lab may cross the lunch break after Period 4.</p>
-            <p>7. Saturday restricted to 4 periods (no practical labs on Saturday).</p>
-            <p>8. Exact weekly periods satisfied for each subject.</p>
+            <p>2. Active Fixed Assignments locked (Theory, Lab, Library).</p>
+            <p>3. Zero faculty clashes across all years and sections.</p>
+            <p>4. Zero room double-bookings for classrooms or lab rooms.</p>
+            <p>5. Practical labs = exactly 3 consecutive periods, once/week.</p>
+            <p>6. Integrated labs = exactly 2 consecutive periods, once/week.</p>
+            <p>7. No lab may cross the lunch break after Period 4.</p>
+            <p>8. Saturday restricted to 4 periods (no practical labs on Saturday).</p>
+            <p>9. At least 1 Library period scheduled per week per section.</p>
+            <p>10. Exact weekly periods satisfied for each subject.</p>
           </div>
 
           <div className="space-y-1.5 p-3 bg-slate-50 rounded-lg border border-slate-100">
@@ -333,9 +308,11 @@ export const GeneratorPage: React.FC = () => {
               Priority 2: Soft Optimization Heuristics
             </span>
             <p>1. Even subject distribution (avoid scheduling the same theory subject multiple times on the same day).</p>
-            <p>2. Balanced faculty load distribution across the week.</p>
-            <p>3. Prefer earlier lecture periods for theory core topics.</p>
-            <p>4. Afternoon slots prioritized for 3-period practical lab sessions.</p>
+            <p>2. Subject Morning / Afternoon balance across the lunch break.</p>
+            <p>3. Faculty non-consecutive teaching optimization (avoids 3+ consecutive periods).</p>
+            <p>4. Balanced faculty load distribution across the week.</p>
+            <p>5. Prefer earlier lecture periods for theory core topics.</p>
+            <p>6. Afternoon slots prioritized for 3-period practical lab sessions.</p>
           </div>
         </div>
       </Card>
