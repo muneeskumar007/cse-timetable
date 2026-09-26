@@ -46,4 +46,44 @@ describe('Backup Validation Service', () => {
     expect(result.isValid).toBe(false);
     expect(result.errors.some((e) => e.includes('years'))).toBe(true);
   });
+
+  it('triggers subscriber notifications via notifyDataChanged and unsubscribe stops them', async () => {
+    const { subscribeToDataChanges, notifyDataChanged } = await import('../services/cloudService');
+    let notified = false;
+    const unsubscribe = subscribeToDataChanges(() => {
+      notified = true;
+    });
+
+    notifyDataChanged();
+    expect(notified).toBe(true);
+    unsubscribe();
+
+    // Verify unsubscribing stops notifications
+    notified = false;
+    notifyDataChanged();
+    expect(notified).toBe(false);
+  });
+
+  it('verifies DEMO datasets are structurally sound and complete', async () => {
+    const { DEMO_FACULTY, DEMO_SUBJECTS, DEMO_SUBJECT_ASSIGNMENTS, DEMO_LABS } = await import('../db/demoData');
+    const { INITIAL_YEARS, DEFAULT_ROOMS } = await import('../db/seedData');
+
+    expect(DEMO_FACULTY.length).toBe(10);
+    expect(DEMO_SUBJECTS.length).toBe(12);
+    expect(DEMO_SUBJECT_ASSIGNMENTS.length).toBe(36);
+    expect(DEMO_LABS.length).toBe(18);
+    expect(INITIAL_YEARS.length).toBe(3);
+    expect(DEFAULT_ROOMS.length).toBe(13);
+
+    // Verify all assignment sections exist in INITIAL_YEARS
+    const allSectionIds = INITIAL_YEARS.flatMap((y) => y.sections.map((s) => s.id));
+    for (const a of DEMO_SUBJECT_ASSIGNMENTS) {
+      expect(allSectionIds).toContain(a.sectionId);
+    }
+
+    // Verify all lab sections exist in INITIAL_YEARS
+    for (const l of DEMO_LABS) {
+      expect(allSectionIds).toContain(l.sectionId);
+    }
+  });
 });

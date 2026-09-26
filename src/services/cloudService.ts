@@ -10,6 +10,8 @@ import {
   query,
   where,
   orderBy,
+  type WriteBatch,
+  type Firestore,
 } from 'firebase/firestore';
 import { db } from '../db/database';
 import {
@@ -42,6 +44,41 @@ import type {
   AppMetadata,
   BackupData,
 } from '../types';
+
+type DataChangeListener = () => void;
+const changeListeners: Set<DataChangeListener> = new Set();
+
+export const subscribeToDataChanges = (listener: DataChangeListener) => {
+  changeListeners.add(listener);
+  return () => {
+    changeListeners.delete(listener);
+  };
+};
+
+export const notifyDataChanged = () => {
+  changeListeners.forEach((fn) => {
+    try {
+      fn();
+    } catch (e) {
+      console.error('Error in data change listener:', e);
+    }
+  });
+};
+
+async function commitInChunks(
+  fs: Firestore,
+  operations: ((batch: WriteBatch) => void)[]
+): Promise<void> {
+  const CHUNK_SIZE = 400; // Keep well under Firestore's 500 writes per batch limit
+  for (let i = 0; i < operations.length; i += CHUNK_SIZE) {
+    const batch = writeBatch(fs);
+    const chunk = operations.slice(i, i + CHUNK_SIZE);
+    for (const op of chunk) {
+      op(batch);
+    }
+    await batch.commit();
+  }
+}
 
 export const cloudService = {
   /**
@@ -125,6 +162,7 @@ export const cloudService = {
         });
       }
       await db.faculty.put(fac);
+      notifyDataChanged();
     },
 
     async update(id: string, partial: Partial<Faculty>): Promise<void> {
@@ -133,6 +171,7 @@ export const cloudService = {
         await setDoc(facRef, { ...partial, updatedAt: new Date().toISOString() }, { merge: true });
       }
       await db.faculty.update(id, partial);
+      notifyDataChanged();
     },
 
     async delete(id: string): Promise<void> {
@@ -140,6 +179,7 @@ export const cloudService = {
         await deleteDoc(doc(firestore, 'faculty', id));
       }
       await db.faculty.delete(id);
+      notifyDataChanged();
     },
 
     async bulkUpsert(rows: { facultyCode: string; facultyName: string; weeklyWorkload: number; designation?: string }[], existingFaculty: Faculty[]): Promise<void> {
@@ -177,6 +217,7 @@ export const cloudService = {
           await db.faculty.put(facDoc);
         }
       }
+      notifyDataChanged();
     },
   },
 
@@ -221,6 +262,7 @@ export const cloudService = {
 
       await db.academicYears.put(year);
       await db.sections.bulkPut(newSections);
+      notifyDataChanged();
     },
 
     async update(id: string, partial: Partial<AcademicYear>): Promise<void> {
@@ -228,6 +270,7 @@ export const cloudService = {
         await setDoc(doc(firestore, 'academicYears', id), { ...partial, updatedAt: new Date().toISOString() }, { merge: true });
       }
       await db.academicYears.update(id, partial);
+      notifyDataChanged();
     },
 
     async delete(yearId: string): Promise<void> {
@@ -261,6 +304,7 @@ export const cloudService = {
       await db.subjectAssignments.where('yearId').equals(yearId).delete();
       await db.labs.where('yearId').equals(yearId).delete();
       await db.timetableEntries.where('yearId').equals(yearId).delete();
+      notifyDataChanged();
     },
   },
 
@@ -275,6 +319,7 @@ export const cloudService = {
         );
       }
       await db.sections.update(sectionId, { roomId, roomNumber });
+      notifyDataChanged();
     },
   },
 
@@ -285,6 +330,7 @@ export const cloudService = {
         await setDoc(doc(firestore, 'rooms', room.id), { ...room, updatedAt: new Date().toISOString() });
       }
       await db.rooms.put(room);
+      notifyDataChanged();
     },
 
     async update(id: string, partial: Partial<Room>): Promise<void> {
@@ -292,6 +338,7 @@ export const cloudService = {
         await setDoc(doc(firestore, 'rooms', id), { ...partial, updatedAt: new Date().toISOString() }, { merge: true });
       }
       await db.rooms.update(id, partial);
+      notifyDataChanged();
     },
 
     async delete(id: string): Promise<void> {
@@ -299,6 +346,7 @@ export const cloudService = {
         await deleteDoc(doc(firestore, 'rooms', id));
       }
       await db.rooms.delete(id);
+      notifyDataChanged();
     },
   },
 
@@ -312,6 +360,7 @@ export const cloudService = {
         });
       }
       await db.subjectAssignments.put(assignment);
+      notifyDataChanged();
     },
 
     async update(id: string, partial: Partial<SubjectAssignment>): Promise<void> {
@@ -322,6 +371,7 @@ export const cloudService = {
         }, { merge: true });
       }
       await db.subjectAssignments.update(id, partial);
+      notifyDataChanged();
     },
 
     async delete(id: string): Promise<void> {
@@ -329,6 +379,7 @@ export const cloudService = {
         await deleteDoc(doc(firestore, 'subjectAssignments', id));
       }
       await db.subjectAssignments.delete(id);
+      notifyDataChanged();
     },
 
     async replaceForYear(
@@ -363,6 +414,7 @@ export const cloudService = {
       await db.subjectAssignments.where('yearId').equals(yearId).delete();
       await db.subjects.bulkPut(uniqueSubjects);
       await db.subjectAssignments.bulkPut(newAssignments);
+      notifyDataChanged();
     },
   },
 
@@ -373,6 +425,7 @@ export const cloudService = {
         await setDoc(doc(firestore, 'labs', lab.id), { ...lab, updatedAt: new Date().toISOString() });
       }
       await db.labs.put(lab);
+      notifyDataChanged();
     },
 
     async update(id: string, partial: Partial<Lab>): Promise<void> {
@@ -380,6 +433,7 @@ export const cloudService = {
         await setDoc(doc(firestore, 'labs', id), { ...partial, updatedAt: new Date().toISOString() }, { merge: true });
       }
       await db.labs.update(id, partial);
+      notifyDataChanged();
     },
 
     async delete(id: string): Promise<void> {
@@ -387,6 +441,7 @@ export const cloudService = {
         await deleteDoc(doc(firestore, 'labs', id));
       }
       await db.labs.delete(id);
+      notifyDataChanged();
     },
   },
 
@@ -404,6 +459,7 @@ export const cloudService = {
         });
       }
       await db.fixedAssignments.put(fullAssignment);
+      notifyDataChanged();
       return fullAssignment;
     },
 
@@ -415,6 +471,7 @@ export const cloudService = {
         }, { merge: true });
       }
       await db.fixedAssignments.update(id, partial);
+      notifyDataChanged();
     },
 
     async delete(id: string): Promise<void> {
@@ -422,6 +479,7 @@ export const cloudService = {
         await deleteDoc(doc(firestore, 'fixedAssignments', id));
       }
       await db.fixedAssignments.delete(id);
+      notifyDataChanged();
     },
 
     async toggleActive(id: string, active: boolean): Promise<void> {
@@ -432,6 +490,7 @@ export const cloudService = {
         }, { merge: true });
       }
       await db.fixedAssignments.update(id, { active });
+      notifyDataChanged();
     },
   },
 
@@ -450,6 +509,7 @@ export const cloudService = {
       for (const p of periods) {
         await db.periodConfigs.update(p.id, p);
       }
+      notifyDataChanged();
     },
   },
 
@@ -468,6 +528,7 @@ export const cloudService = {
       }
       await db.generatedTimetableEntries.clear();
       await db.generatedTimetableEntries.bulkPut(entries);
+      notifyDataChanged();
     },
 
     async saveCurrent(entries: TimetableEntry[], versionCount: number): Promise<TimetableVersion> {
@@ -512,6 +573,7 @@ export const cloudService = {
       await db.timetableEntries.clear();
       await db.timetableEntries.bulkPut(entries);
       await db.timetableVersions.put(newVersion);
+      notifyDataChanged();
 
       return newVersion;
     },
@@ -539,6 +601,7 @@ export const cloudService = {
 
       await db.timetableEntries.clear();
       await db.timetableEntries.bulkPut(generated);
+      notifyDataChanged();
       return generated;
     },
 
@@ -554,6 +617,7 @@ export const cloudService = {
       }
       await db.timetableEntries.clear();
       await db.timetableEntries.bulkPut(version.entries);
+      notifyDataChanged();
     },
 
     async publish(versionId: string, versionNumber: number): Promise<void> {
@@ -581,93 +645,105 @@ export const cloudService = {
       }
 
       await db.timetableVersions.update(versionId, { isPublished: true, status: 'PUBLISHED' });
+      notifyDataChanged();
     },
   },
 
   // ================= DEMO DATA & RESET =================
   async loadDemoData(): Promise<void> {
     if (isFirebaseConfigured && firestore) {
-      const batch = writeBatch(firestore);
+      const fs = firestore;
+      try {
+        const collectionsToClear = [
+          'faculty',
+          'academicYears',
+          'sections',
+          'rooms',
+          'subjects',
+          'subjectAssignments',
+          'labs',
+          'periodConfigs',
+          'fixedSlots',
+          'fixedAssignments',
+          'timetableEntries',
+          'generatedTimetableEntries',
+          'timetableVersions',
+        ];
 
-      // Collections to clear
-      const collectionsToClear = [
-        'faculty',
-        'academicYears',
-        'sections',
-        'rooms',
-        'subjects',
-        'subjectAssignments',
-        'labs',
-        'periodConfigs',
-        'fixedSlots',
-        'timetableEntries',
-        'generatedTimetableEntries',
-        'timetableVersions',
-      ];
+        const ops: ((batch: WriteBatch) => void)[] = [];
 
-      for (const colName of collectionsToClear) {
-        const snap = await getDocs(collection(firestore, colName));
-        snap.forEach((d) => batch.delete(d.ref));
-      }
-
-      // Add Settings
-      batch.set(doc(firestore, 'settings', 'department'), {
-        ...DEFAULT_SETTINGS,
-        updatedAt: new Date().toISOString(),
-      });
-
-      // Add Periods
-      for (const p of DEFAULT_PERIODS) {
-        batch.set(doc(firestore, 'periodConfigs', p.id), p);
-      }
-
-      // Add Fixed Slots
-      for (const fs of DEFAULT_FIXED_SLOTS) {
-        batch.set(doc(firestore, 'fixedSlots', fs.id), fs);
-      }
-
-      // Add Rooms
-      for (const r of DEFAULT_ROOMS) {
-        batch.set(doc(firestore, 'rooms', r.id), r);
-      }
-
-      // Add Years and Sections
-      for (const group of INITIAL_YEARS) {
-        batch.set(doc(firestore, 'academicYears', group.year.id), group.year);
-        for (const s of group.sections) {
-          batch.set(doc(firestore, 'sections', s.id), s);
+        for (const colName of collectionsToClear) {
+          const snap = await getDocs(collection(fs, colName));
+          snap.forEach((d) => {
+            ops.push((batch) => batch.delete(d.ref));
+          });
         }
-      }
 
-      // Add Demo Faculty
-      for (const f of DEMO_FACULTY) {
-        batch.set(doc(firestore, 'faculty', f.id), f);
-      }
+        // Add Settings
+        ops.push((batch) =>
+          batch.set(doc(fs, 'settings', 'department'), {
+            ...DEFAULT_SETTINGS,
+            updatedAt: new Date().toISOString(),
+          })
+        );
 
-      // Add Demo Subjects & Assignments
-      for (const s of DEMO_SUBJECTS) {
-        batch.set(doc(firestore, 'subjects', s.id), s);
-      }
-      for (const a of DEMO_SUBJECT_ASSIGNMENTS) {
-        batch.set(doc(firestore, 'subjectAssignments', a.id), a);
-      }
+        // Add Periods
+        for (const p of DEFAULT_PERIODS) {
+          ops.push((batch) => batch.set(doc(fs, 'periodConfigs', p.id), p));
+        }
 
-      // Add Demo Labs
-      for (const l of DEMO_LABS) {
-        batch.set(doc(firestore, 'labs', l.id), l);
+        // Add Fixed Slots
+        for (const fsItem of DEFAULT_FIXED_SLOTS) {
+          ops.push((batch) => batch.set(doc(fs, 'fixedSlots', fsItem.id), fsItem));
+        }
+
+        // Add Rooms
+        for (const r of DEFAULT_ROOMS) {
+          ops.push((batch) => batch.set(doc(fs, 'rooms', r.id), r));
+        }
+
+        // Add Years and Sections
+        for (const group of INITIAL_YEARS) {
+          ops.push((batch) => batch.set(doc(fs, 'academicYears', group.year.id), group.year));
+          for (const s of group.sections) {
+            ops.push((batch) => batch.set(doc(fs, 'sections', s.id), s));
+          }
+        }
+
+        // Add Demo Faculty
+        for (const f of DEMO_FACULTY) {
+          ops.push((batch) => batch.set(doc(fs, 'faculty', f.id), f));
+        }
+
+        // Add Demo Subjects & Assignments
+        for (const s of DEMO_SUBJECTS) {
+          ops.push((batch) => batch.set(doc(fs, 'subjects', s.id), s));
+        }
+        for (const a of DEMO_SUBJECT_ASSIGNMENTS) {
+          ops.push((batch) => batch.set(doc(fs, 'subjectAssignments', a.id), a));
+        }
+
+        // Add Demo Labs
+        for (const l of DEMO_LABS) {
+          ops.push((batch) => batch.set(doc(fs, 'labs', l.id), l));
+        }
+
+        // Reset App Metadata
+        ops.push((batch) =>
+          batch.set(doc(fs, 'metadata', 'app'), {
+            id: 'app',
+            currentPublishedVersionId: null,
+            publishedAt: null,
+            schemaVersion: '1.0.0',
+            status: 'DRAFT',
+            lastSavedAt: new Date().toISOString(),
+          })
+        );
+
+        await commitInChunks(fs, ops);
+      } catch (fsErr) {
+        console.warn('Firestore loadDemoData warning (continuing to local storage):', fsErr);
       }
-
-      // Reset App Metadata
-      batch.set(doc(firestore, 'metadata', 'app'), {
-        id: 'app',
-        currentPublishedVersionId: null,
-        publishedAt: null,
-        schemaVersion: '1.0.0',
-        status: 'DRAFT',
-        lastSavedAt: new Date().toISOString(),
-      });
-
-      await batch.commit();
     }
 
     // Mirror to local Dexie
@@ -680,6 +756,7 @@ export const cloudService = {
     await db.labs.clear();
     await db.periodConfigs.clear();
     await db.fixedSlots.clear();
+    await db.fixedAssignments.clear();
     await db.timetableEntries.clear();
     await db.generatedTimetableEntries.clear();
     await db.timetableVersions.clear();
@@ -697,57 +774,71 @@ export const cloudService = {
     await db.subjects.bulkAdd(DEMO_SUBJECTS);
     await db.subjectAssignments.bulkAdd(DEMO_SUBJECT_ASSIGNMENTS);
     await db.labs.bulkAdd(DEMO_LABS);
+
+    notifyDataChanged();
   },
 
   async resetProject(): Promise<void> {
     if (isFirebaseConfigured && firestore) {
-      const collectionsToClear = [
-        'faculty',
-        'academicYears',
-        'sections',
-        'rooms',
-        'subjects',
-        'subjectAssignments',
-        'labs',
-        'periodConfigs',
-        'fixedSlots',
-        'fixedAssignments',
-        'timetableEntries',
-        'generatedTimetableEntries',
-        'timetableVersions',
-      ];
-      const batch = writeBatch(firestore);
-      for (const colName of collectionsToClear) {
-        const snap = await getDocs(collection(firestore, colName));
-        snap.forEach((d) => batch.delete(d.ref));
-      }
-      batch.set(doc(firestore, 'settings', 'department'), {
-        ...DEFAULT_SETTINGS,
-        updatedAt: new Date().toISOString(),
-      });
-      for (const p of DEFAULT_PERIODS) {
-        batch.set(doc(firestore, 'periodConfigs', p.id), p);
-      }
-      for (const fs of DEFAULT_FIXED_SLOTS) {
-        batch.set(doc(firestore, 'fixedSlots', fs.id), fs);
-      }
-      for (const r of DEFAULT_ROOMS) {
-        batch.set(doc(firestore, 'rooms', r.id), r);
-      }
-      for (const group of INITIAL_YEARS) {
-        batch.set(doc(firestore, 'academicYears', group.year.id), group.year);
-        for (const s of group.sections) {
-          batch.set(doc(firestore, 'sections', s.id), s);
+      const fs = firestore;
+      try {
+        const collectionsToClear = [
+          'faculty',
+          'academicYears',
+          'sections',
+          'rooms',
+          'subjects',
+          'subjectAssignments',
+          'labs',
+          'periodConfigs',
+          'fixedSlots',
+          'fixedAssignments',
+          'timetableEntries',
+          'generatedTimetableEntries',
+          'timetableVersions',
+        ];
+
+        const ops: ((batch: WriteBatch) => void)[] = [];
+        for (const colName of collectionsToClear) {
+          const snap = await getDocs(collection(fs, colName));
+          snap.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
         }
+
+        ops.push((batch) =>
+          batch.set(doc(fs, 'settings', 'department'), {
+            ...DEFAULT_SETTINGS,
+            updatedAt: new Date().toISOString(),
+          })
+        );
+        for (const p of DEFAULT_PERIODS) {
+          ops.push((batch) => batch.set(doc(fs, 'periodConfigs', p.id), p));
+        }
+        for (const fsItem of DEFAULT_FIXED_SLOTS) {
+          ops.push((batch) => batch.set(doc(fs, 'fixedSlots', fsItem.id), fsItem));
+        }
+        for (const r of DEFAULT_ROOMS) {
+          ops.push((batch) => batch.set(doc(fs, 'rooms', r.id), r));
+        }
+        for (const group of INITIAL_YEARS) {
+          ops.push((batch) => batch.set(doc(fs, 'academicYears', group.year.id), group.year));
+          for (const s of group.sections) {
+            ops.push((batch) => batch.set(doc(fs, 'sections', s.id), s));
+          }
+        }
+        ops.push((batch) =>
+          batch.set(doc(fs, 'metadata', 'app'), {
+            id: 'app',
+            currentPublishedVersionId: null,
+            publishedAt: null,
+            schemaVersion: '1.0.0',
+            status: 'DRAFT',
+          })
+        );
+
+        await commitInChunks(fs, ops);
+      } catch (fsErr) {
+        console.warn('Firestore reset warning (continuing to local storage):', fsErr);
       }
-      batch.set(doc(firestore, 'metadata', 'app'), {
-        id: 'app',
-        currentPublishedVersionId: null,
-        publishedAt: null,
-        schemaVersion: '1.0.0',
-        status: 'DRAFT',
-      });
-      await batch.commit();
     }
 
     await db.faculty.clear();
@@ -773,75 +864,83 @@ export const cloudService = {
       await db.academicYears.add(group.year);
       await db.sections.bulkAdd(group.sections);
     }
+
+    notifyDataChanged();
   },
 
   async restoreAll(backupData: BackupData): Promise<void> {
     if (isFirebaseConfigured && firestore) {
-      const collectionsToClear = [
-        'faculty',
-        'academicYears',
-        'sections',
-        'rooms',
-        'subjects',
-        'subjectAssignments',
-        'labs',
-        'periodConfigs',
-        'fixedSlots',
-        'fixedAssignments',
-        'timetableEntries',
-        'generatedTimetableEntries',
-        'timetableVersions',
-      ];
-      const batch = writeBatch(firestore);
-      for (const colName of collectionsToClear) {
-        const snap = await getDocs(collection(firestore, colName));
-        snap.forEach((d) => batch.delete(d.ref));
-      }
+      const fs = firestore;
+      try {
+        const collectionsToClear = [
+          'faculty',
+          'academicYears',
+          'sections',
+          'rooms',
+          'subjects',
+          'subjectAssignments',
+          'labs',
+          'periodConfigs',
+          'fixedSlots',
+          'fixedAssignments',
+          'timetableEntries',
+          'generatedTimetableEntries',
+          'timetableVersions',
+        ];
 
-      if (backupData.departmentSettings) {
-        batch.set(doc(firestore, 'settings', 'department'), backupData.departmentSettings);
-      }
-      for (const f of backupData.faculty || []) {
-        batch.set(doc(firestore, 'faculty', f.id), f);
-      }
-      for (const y of backupData.years || []) {
-        batch.set(doc(firestore, 'academicYears', y.id), y);
-      }
-      for (const s of backupData.sections || []) {
-        batch.set(doc(firestore, 'sections', s.id), s);
-      }
-      for (const r of backupData.rooms || []) {
-        batch.set(doc(firestore, 'rooms', r.id), r);
-      }
-      for (const sub of backupData.subjects || []) {
-        batch.set(doc(firestore, 'subjects', sub.id), sub);
-      }
-      for (const a of backupData.subjectAssignments || []) {
-        batch.set(doc(firestore, 'subjectAssignments', a.id), a);
-      }
-      for (const l of backupData.labs || []) {
-        batch.set(doc(firestore, 'labs', l.id), l);
-      }
-      for (const p of backupData.periods || []) {
-        batch.set(doc(firestore, 'periodConfigs', p.id), p);
-      }
-      for (const fs of backupData.fixedSlots || []) {
-        batch.set(doc(firestore, 'fixedSlots', fs.id), fs);
-      }
-      for (const fa of backupData.fixedAssignments || []) {
-        batch.set(doc(firestore, 'fixedAssignments', fa.id), fa);
-      }
-      for (const e of backupData.currentTimetable || []) {
-        batch.set(doc(firestore, 'timetableEntries', e.id), e);
-      }
-      for (const ge of backupData.generatedTimetable || []) {
-        batch.set(doc(firestore, 'generatedTimetableEntries', ge.id), ge);
-      }
-      for (const v of backupData.timetableVersions || []) {
-        batch.set(doc(firestore, 'timetableVersions', v.id), v);
-      }
+        const ops: ((batch: WriteBatch) => void)[] = [];
+        for (const colName of collectionsToClear) {
+          const snap = await getDocs(collection(fs, colName));
+          snap.forEach((d) => ops.push((batch) => batch.delete(d.ref)));
+        }
 
-      await batch.commit();
+        if (backupData.departmentSettings) {
+          ops.push((batch) => batch.set(doc(fs, 'settings', 'department'), backupData.departmentSettings));
+        }
+        for (const f of backupData.faculty || []) {
+          ops.push((batch) => batch.set(doc(fs, 'faculty', f.id), f));
+        }
+        for (const y of backupData.years || []) {
+          ops.push((batch) => batch.set(doc(fs, 'academicYears', y.id), y));
+        }
+        for (const s of backupData.sections || []) {
+          ops.push((batch) => batch.set(doc(fs, 'sections', s.id), s));
+        }
+        for (const r of backupData.rooms || []) {
+          ops.push((batch) => batch.set(doc(fs, 'rooms', r.id), r));
+        }
+        for (const sub of backupData.subjects || []) {
+          ops.push((batch) => batch.set(doc(fs, 'subjects', sub.id), sub));
+        }
+        for (const a of backupData.subjectAssignments || []) {
+          ops.push((batch) => batch.set(doc(fs, 'subjectAssignments', a.id), a));
+        }
+        for (const l of backupData.labs || []) {
+          ops.push((batch) => batch.set(doc(fs, 'labs', l.id), l));
+        }
+        for (const p of backupData.periods || []) {
+          ops.push((batch) => batch.set(doc(fs, 'periodConfigs', p.id), p));
+        }
+        for (const fsItem of backupData.fixedSlots || []) {
+          ops.push((batch) => batch.set(doc(fs, 'fixedSlots', fsItem.id), fsItem));
+        }
+        for (const fa of backupData.fixedAssignments || []) {
+          ops.push((batch) => batch.set(doc(fs, 'fixedAssignments', fa.id), fa));
+        }
+        for (const e of backupData.currentTimetable || []) {
+          ops.push((batch) => batch.set(doc(fs, 'timetableEntries', e.id), e));
+        }
+        for (const ge of backupData.generatedTimetable || []) {
+          ops.push((batch) => batch.set(doc(fs, 'generatedTimetableEntries', ge.id), ge));
+        }
+        for (const v of backupData.timetableVersions || []) {
+          ops.push((batch) => batch.set(doc(fs, 'timetableVersions', v.id), v));
+        }
+
+        await commitInChunks(fs, ops);
+      } catch (fsErr) {
+        console.warn('Firestore restoreAll warning (continuing to local storage):', fsErr);
+      }
     }
 
     // Mirror to Dexie
@@ -874,5 +973,7 @@ export const cloudService = {
     if (backupData.currentTimetable?.length) await db.timetableEntries.bulkAdd(backupData.currentTimetable);
     if (backupData.generatedTimetable?.length) await db.generatedTimetableEntries.bulkAdd(backupData.generatedTimetable);
     if (backupData.timetableVersions?.length) await db.timetableVersions.bulkAdd(backupData.timetableVersions);
+
+    notifyDataChanged();
   },
 };

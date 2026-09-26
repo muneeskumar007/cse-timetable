@@ -8,7 +8,7 @@ import {
   orderBy,
 } from 'firebase/firestore';
 import { db } from '../db/database';
-import { cloudService } from '../services/cloudService';
+import { cloudService, subscribeToDataChanges } from '../services/cloudService';
 import type {
   Faculty,
   AcademicYear,
@@ -49,6 +49,7 @@ interface DataContextType {
   saveTimetable: (entries: TimetableEntry[]) => Promise<TimetableVersion>;
   resetToGenerated: () => Promise<boolean>;
   restoreVersion: (version: TimetableVersion) => Promise<void>;
+  refreshData: () => Promise<void>;
 }
 
 const defaultSettings: DepartmentSettings = {
@@ -356,12 +357,67 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setVersions(ver);
     };
 
+    const unsubLocal = subscribeToDataChanges(() => {
+      loadFromLocal().catch((err) => console.error('Error reloading local state:', err));
+    });
+    unsubs.push(unsubLocal);
+
     setup();
 
     return () => {
       unsubs.forEach((unsub) => unsub());
     };
   }, []);
+
+  const refreshData = async (): Promise<void> => {
+    // Read directly from local Dexie into memory
+    const [
+      sList,
+      fac,
+      yr,
+      sec,
+      rm,
+      sub,
+      asgn,
+      lb,
+      pr,
+      fs,
+      fa,
+      ent,
+      gen,
+      ver,
+    ] = await Promise.all([
+      db.settings.toArray(),
+      db.faculty.toArray(),
+      db.academicYears.orderBy('orderIndex').toArray(),
+      db.sections.toArray(),
+      db.rooms.toArray(),
+      db.subjects.toArray(),
+      db.subjectAssignments.toArray(),
+      db.labs.toArray(),
+      db.periodConfigs.orderBy('periodNumber').toArray(),
+      db.fixedSlots.toArray(),
+      db.fixedAssignments.toArray(),
+      db.timetableEntries.toArray(),
+      db.generatedTimetableEntries.toArray(),
+      db.timetableVersions.orderBy('versionNumber').reverse().toArray(),
+    ]);
+
+    if (sList[0]) setSettings(sList[0]);
+    setFaculty(fac);
+    setYears(yr);
+    setSections(sec);
+    setRooms(rm);
+    setSubjects(sub);
+    setAssignments(asgn);
+    setLabs(lb);
+    setPeriods(pr);
+    setFixedSlots(fs);
+    setFixedAssignments(fa);
+    setEntries(ent);
+    setGeneratedEntries(gen);
+    setVersions(ver);
+  };
 
   const publishTimetable = async (versionId: string) => {
     setCloudStatus('syncing');
@@ -448,6 +504,7 @@ export const DataProvider: React.FC<{ children: React.ReactNode }> = ({ children
       saveTimetable,
       resetToGenerated,
       restoreVersion,
+      refreshData,
     }),
     [
       faculty,

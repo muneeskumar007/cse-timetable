@@ -4,6 +4,7 @@ import { Button } from '../components/common/Button';
 import { Modal } from '../components/common/Modal';
 import { ConfirmationDialog } from '../components/common/ConfirmationDialog';
 import { useUiStore } from '../stores/uiStore';
+import { useData } from '../context/DataContext';
 import {
   exportBackup,
   validateBackup,
@@ -27,6 +28,7 @@ import {
 
 export const BackupPage: React.FC = () => {
   const { addToast } = useUiStore();
+  const { refreshData } = useData();
 
   // Restore state
   const [isRestoreModalOpen, setIsRestoreModalOpen] = useState(false);
@@ -79,6 +81,7 @@ export const BackupPage: React.FC = () => {
 
     try {
       await restoreBackup(restoreValidation.data);
+      await refreshData();
       addToast({
         type: 'success',
         title: 'Project Restored',
@@ -97,6 +100,7 @@ export const BackupPage: React.FC = () => {
     setIsResetting(true);
     try {
       await resetProject();
+      await refreshData();
       addToast({
         type: 'success',
         title: 'Project Reset',
@@ -114,6 +118,7 @@ export const BackupPage: React.FC = () => {
     setIsLoadingDemo(true);
     try {
       await cloudService.loadDemoData();
+      await refreshData();
       addToast({
         type: 'success',
         title: 'Demo Data Loaded',
