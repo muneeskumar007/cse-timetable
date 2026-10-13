@@ -350,7 +350,89 @@ export const cloudService = {
     },
   },
 
-  // ================= SUBJECTS & ASSIGNMENTS =================
+  // ================= SUBJECTS MASTER =================
+  subjects: {
+    async add(subject: Subject): Promise<void> {
+      if (isFirebaseConfigured && firestore) {
+        await setDoc(doc(firestore, 'subjects', subject.id), {
+          ...subject,
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      await db.subjects.put(subject);
+      notifyDataChanged();
+    },
+
+    async update(id: string, partial: Partial<Subject>): Promise<void> {
+      if (isFirebaseConfigured && firestore) {
+        await setDoc(doc(firestore, 'subjects', id), {
+          ...partial,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      }
+      await db.subjects.update(id, partial);
+      notifyDataChanged();
+    },
+
+    async delete(id: string): Promise<void> {
+      const existing = await db.subjects.get(id);
+      if (isFirebaseConfigured && firestore) {
+        const batch = writeBatch(firestore);
+        batch.delete(doc(firestore, 'subjects', id));
+        if (existing) {
+          const assignSnap = await getDocs(
+            query(
+              collection(firestore, 'subjectAssignments'),
+              where('yearId', '==', existing.yearId),
+              where('subjectCode', '==', existing.subjectCode)
+            )
+          );
+          assignSnap.forEach((d) => batch.delete(d.ref));
+        }
+        await batch.commit();
+      }
+      if (existing) {
+        await db.subjectAssignments
+          .where('yearId')
+          .equals(existing.yearId)
+          .and((a) => a.subjectCode === existing.subjectCode)
+          .delete();
+      }
+      await db.subjects.delete(id);
+      notifyDataChanged();
+    },
+
+    async replaceForYear(
+      yearId: string,
+      newSubjects: Subject[]
+    ): Promise<void> {
+      if (isFirebaseConfigured && firestore) {
+        const batch = writeBatch(firestore);
+
+        // Delete existing subjects for this year
+        const oldSubSnap = await getDocs(query(collection(firestore, 'subjects'), where('yearId', '==', yearId)));
+        oldSubSnap.forEach((d) => batch.delete(d.ref));
+
+        // Delete existing assignments for this year so invalid mappings do not remain
+        const oldAssignSnap = await getDocs(query(collection(firestore, 'subjectAssignments'), where('yearId', '==', yearId)));
+        oldAssignSnap.forEach((d) => batch.delete(d.ref));
+
+        // Add new subjects
+        for (const s of newSubjects) {
+          batch.set(doc(firestore, 'subjects', s.id), { ...s, updatedAt: new Date().toISOString() });
+        }
+
+        await batch.commit();
+      }
+
+      await db.subjects.where('yearId').equals(yearId).delete();
+      await db.subjectAssignments.where('yearId').equals(yearId).delete();
+      await db.subjects.bulkPut(newSubjects);
+      notifyDataChanged();
+    },
+  },
+
+  // ================= SUBJECT ASSIGNMENTS =================
   assignments: {
     async add(assignment: SubjectAssignment): Promise<void> {
       if (isFirebaseConfigured && firestore) {
@@ -379,6 +461,44 @@ export const cloudService = {
         await deleteDoc(doc(firestore, 'subjectAssignments', id));
       }
       await db.subjectAssignments.delete(id);
+      notifyDataChanged();
+    },
+
+    async saveForSection(
+      yearId: string,
+      sectionId: string,
+      newAssignments: SubjectAssignment[]
+    ): Promise<void> {
+      if (isFirebaseConfigured && firestore) {
+        const batch = writeBatch(firestore);
+
+        const oldAssignSnap = await getDocs(
+          query(
+            collection(firestore, 'subjectAssignments'),
+            where('yearId', '==', yearId),
+            where('sectionId', '==', sectionId)
+          )
+        );
+        oldAssignSnap.forEach((d) => batch.delete(d.ref));
+
+        for (const a of newAssignments) {
+          batch.set(doc(firestore, 'subjectAssignments', a.id), {
+            ...a,
+            updatedAt: new Date().toISOString(),
+          });
+        }
+
+        await batch.commit();
+      }
+
+      await db.subjectAssignments
+        .where('yearId')
+        .equals(yearId)
+        .and((a) => a.sectionId === sectionId)
+        .delete();
+      if (newAssignments.length > 0) {
+        await db.subjectAssignments.bulkPut(newAssignments);
+      }
       notifyDataChanged();
     },
 

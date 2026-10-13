@@ -33,6 +33,7 @@ export const SectionVerificationPage: React.FC = () => {
     versions,
     years,
     sections,
+    subjects,
     assignments,
     labs,
     fixedSlots,
@@ -92,7 +93,8 @@ export const SectionVerificationPage: React.FC = () => {
       fixedSlots,
       fixedAssignments,
       settings,
-      periods
+      periods,
+      subjects
     );
   }, [
     activeEntries,
@@ -104,6 +106,7 @@ export const SectionVerificationPage: React.FC = () => {
     fixedAssignments,
     settings,
     periods,
+    subjects,
   ]);
 
   // Run Current Section Verification
@@ -121,7 +124,8 @@ export const SectionVerificationPage: React.FC = () => {
       fixedSlots,
       fixedAssignments,
       settings,
-      periods
+      periods,
+      subjects
     );
   }, [
     activeEntries,
@@ -133,6 +137,7 @@ export const SectionVerificationPage: React.FC = () => {
     fixedAssignments,
     settings,
     periods,
+    subjects,
   ]);
 
   // Handle section click from Department summary table

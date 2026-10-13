@@ -63,27 +63,131 @@ export function downloadFacultyTemplate(): void {
   XLSX.writeFile(wb, 'Faculty_Master_Template.xlsx');
 }
 
+export interface YearSubjectImportResult {
+  validSubjects: {
+    subjectCode: string;
+    subjectName: string;
+    weeklyPeriods: number;
+  }[];
+  errors: RowError[];
+  totalRows: number;
+}
+
 /**
- * Downloads a sample Excel template for Year Subject Assignments
+ * Downloads a sample Excel template for Year Subjects (3 columns: Subject Code, Subject Name, Weekly Periods)
  */
 export function downloadSubjectTemplate(yearName: string = '2nd Year'): void {
   const wsData = [
-    ['Subject Code', 'Subject Name', 'Faculty Code', 'Faculty Name', 'Section', 'Weekly Periods'],
-    ['CS301', 'Data Structures', 'FAC001', 'Dr. R. Kumar', 'A', 4],
-    ['CS301', 'Data Structures', 'FAC002', 'Ms. S. Priya', 'B', 4],
-    ['CS301', 'Data Structures', 'FAC002', 'Ms. S. Priya', 'C', 4],
-    ['CS302', 'Digital Principles', 'FAC003', 'Mr. M. Arun', 'A', 4],
-    ['CS302', 'Digital Principles', 'FAC003', 'Mr. M. Arun', 'B', 4],
-    ['CS302', 'Digital Principles', 'FAC001', 'Dr. R. Kumar', 'C', 4],
+    ['Subject Code', 'Subject Name', 'Weekly Periods'],
+    ['CS301', 'Data Structures', 4],
+    ['CS302', 'Digital Principles', 4],
+    ['CS303', 'Database Management Systems', 5],
+    ['CS304', 'Computer Networks', 4],
+    ['CS305', 'Operating Systems', 4],
+    ['CS306', 'Software Engineering', 3],
   ];
 
   const ws = XLSX.utils.aoa_to_sheet(wsData);
-  ws['!cols'] = [{ wch: 15 }, { wch: 25 }, { wch: 16 }, { wch: 22 }, { wch: 10 }, { wch: 16 }];
+  // Set column widths
+  ws['!cols'] = [{ wch: 16 }, { wch: 32 }, { wch: 18 }];
 
   const wb = XLSX.utils.book_new();
   const safeSheetName = `${yearName.replace(/[^a-zA-Z0-9]/g, '_')}_Subjects`;
   XLSX.utils.book_append_sheet(wb, ws, safeSheetName);
   XLSX.writeFile(wb, `${yearName.replace(/\s+/g, '_')}_Subjects_Template.xlsx`);
+}
+
+/**
+ * Parses and validates a Year-Wise Subject Excel file
+ * Columns: Subject Code | Subject Name | Weekly Periods
+ */
+export function parseAndValidateYearSubjectExcel(
+  data: ArrayBuffer,
+  yearId: string
+): YearSubjectImportResult {
+  const workbook = XLSX.read(data, { type: 'array' });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) {
+    return { validSubjects: [], errors: [{ row: 1, error: 'The uploaded workbook contains no sheets.' }], totalRows: 0 };
+  }
+
+  const sheet = workbook.Sheets[firstSheetName];
+  const rows: (string | number | undefined)[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+
+  if (rows.length < 2) {
+    return { validSubjects: [], errors: [{ row: 1, error: 'Excel file is empty or missing data rows.' }], totalRows: 0 };
+  }
+
+  const headerRow = rows[0].map((h) => String(h || '').trim().toLowerCase());
+  const colCode = headerRow.findIndex((h) => h.includes('code'));
+  const colName = headerRow.findIndex((h) => h.includes('name'));
+  const colPeriods = headerRow.findIndex((h) => h.includes('period') || h.includes('hour') || h.includes('weekly'));
+
+  if (colCode === -1 || colName === -1 || colPeriods === -1) {
+    return {
+      validSubjects: [],
+      errors: [
+        {
+          row: 1,
+          error: `Missing required columns. Required: "Subject Code", "Subject Name", "Weekly Periods". Found: ${rows[0].filter(Boolean).join(', ')}`,
+        },
+      ],
+      totalRows: rows.length - 1,
+    };
+  }
+
+  const validSubjects: YearSubjectImportResult['validSubjects'] = [];
+  const errors: RowError[] = [];
+  const seenCodes = new Set<string>();
+
+  for (let i = 1; i < rows.length; i++) {
+    const rowNum = i + 1;
+    const row = rows[i];
+
+    const isBlank = row.every((val) => String(val || '').trim() === '');
+    if (isBlank) continue;
+
+    const subjectCode = String(row[colCode] || '').trim().toUpperCase();
+    const subjectName = String(row[colName] || '').trim();
+    const rawPeriods = row[colPeriods];
+    const weeklyPeriods = Number(rawPeriods);
+
+    if (!subjectCode) {
+      errors.push({ row: rowNum, error: 'Subject Code is missing.' });
+      continue;
+    }
+
+    if (seenCodes.has(subjectCode)) {
+      errors.push({ row: rowNum, error: `Duplicate Subject Code "${subjectCode}" within the Excel file.` });
+      continue;
+    }
+
+    if (!subjectName) {
+      errors.push({ row: rowNum, error: `Subject Name is missing for code "${subjectCode}".` });
+      continue;
+    }
+
+    if (isNaN(weeklyPeriods) || weeklyPeriods <= 0 || !Number.isInteger(weeklyPeriods)) {
+      errors.push({
+        row: rowNum,
+        error: `Weekly Periods "${rawPeriods}" for "${subjectCode}" must be a positive integer.`,
+      });
+      continue;
+    }
+
+    seenCodes.add(subjectCode);
+    validSubjects.push({
+      subjectCode,
+      subjectName,
+      weeklyPeriods,
+    });
+  }
+
+  return {
+    validSubjects,
+    errors,
+    totalRows: validSubjects.length + errors.length,
+  };
 }
 
 /**

@@ -17,20 +17,20 @@ export const DEMO_FACULTY: Faculty[] = [
 
 export const DEMO_SUBJECTS: Subject[] = [
   // 2nd Year
-  { id: 'sub_cs301', yearId: 'year_2', subjectCode: 'CS301', subjectName: 'Data Structures' },
-  { id: 'sub_cs302', yearId: 'year_2', subjectCode: 'CS302', subjectName: 'Digital Principles & Design' },
-  { id: 'sub_cs303', yearId: 'year_2', subjectCode: 'CS303', subjectName: 'Discrete Mathematics' },
-  { id: 'sub_cs304', yearId: 'year_2', subjectCode: 'CS304', subjectName: 'Object Oriented Java' },
+  { id: 'sub_cs301', yearId: 'year_2', subjectCode: 'CS301', subjectName: 'Data Structures', weeklyPeriods: 4 },
+  { id: 'sub_cs302', yearId: 'year_2', subjectCode: 'CS302', subjectName: 'Digital Principles & Design', weeklyPeriods: 4 },
+  { id: 'sub_cs303', yearId: 'year_2', subjectCode: 'CS303', subjectName: 'Discrete Mathematics', weeklyPeriods: 4 },
+  { id: 'sub_cs304', yearId: 'year_2', subjectCode: 'CS304', subjectName: 'Object Oriented Java', weeklyPeriods: 4 },
   // 3rd Year
-  { id: 'sub_cs501', yearId: 'year_3', subjectCode: 'CS501', subjectName: 'Database Management Systems' },
-  { id: 'sub_cs502', yearId: 'year_3', subjectCode: 'CS502', subjectName: 'Computer Networks' },
-  { id: 'sub_cs503', yearId: 'year_3', subjectCode: 'CS503', subjectName: 'Theory of Computation' },
-  { id: 'sub_cs504', yearId: 'year_3', subjectCode: 'CS504', subjectName: 'Web Technologies' },
+  { id: 'sub_cs501', yearId: 'year_3', subjectCode: 'CS501', subjectName: 'Database Management Systems', weeklyPeriods: 4 },
+  { id: 'sub_cs502', yearId: 'year_3', subjectCode: 'CS502', subjectName: 'Computer Networks', weeklyPeriods: 4 },
+  { id: 'sub_cs503', yearId: 'year_3', subjectCode: 'CS503', subjectName: 'Theory of Computation', weeklyPeriods: 4 },
+  { id: 'sub_cs504', yearId: 'year_3', subjectCode: 'CS504', subjectName: 'Web Technologies', weeklyPeriods: 4 },
   // 4th Year
-  { id: 'sub_cs701', yearId: 'year_4', subjectCode: 'CS701', subjectName: 'Cloud Computing' },
-  { id: 'sub_cs702', yearId: 'year_4', subjectCode: 'CS702', subjectName: 'Cryptography & Security' },
-  { id: 'sub_cs703', yearId: 'year_4', subjectCode: 'CS703', subjectName: 'Artificial Intelligence' },
-  { id: 'sub_cs704', yearId: 'year_4', subjectCode: 'CS704', subjectName: 'Distributed Systems' },
+  { id: 'sub_cs701', yearId: 'year_4', subjectCode: 'CS701', subjectName: 'Cloud Computing', weeklyPeriods: 4 },
+  { id: 'sub_cs702', yearId: 'year_4', subjectCode: 'CS702', subjectName: 'Cryptography & Security', weeklyPeriods: 4 },
+  { id: 'sub_cs703', yearId: 'year_4', subjectCode: 'CS703', subjectName: 'Artificial Intelligence', weeklyPeriods: 4 },
+  { id: 'sub_cs704', yearId: 'year_4', subjectCode: 'CS704', subjectName: 'Distributed Systems', weeklyPeriods: 4 },
 ];
 
 export const DEMO_SUBJECT_ASSIGNMENTS: SubjectAssignment[] = [

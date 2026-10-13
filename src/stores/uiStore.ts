@@ -5,6 +5,7 @@ export type AppPage =
   | 'faculty'
   | 'years'
   | 'subjects'
+  | 'section_faculty'
   | 'rooms'
   | 'labs'
   | 'fixed_assignments'

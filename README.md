@@ -168,12 +168,13 @@ You can seed the system with demo data or enter real data:
 
 #### Option B: Manual Data Entry or Excel Import
 Use the sidebar pages to configure your department:
-1. **Academic Years**: Define batches, years, and sections (e.g., Year 2 Section A).
-2. **Faculty**: Add faculty names, codes, designations, and target weekly hours (or import via Excel).
-3. **Subjects**: Add course codes, titles, weekly periods, and allocate faculty per section.
-4. **Labs**: Configure labs as *Practical* (3 consecutive periods) or *Integrated* (2 periods).
-5. **Classrooms & Labs**: Add room numbers and capacities.
-6. **Settings**: Adjust working days (Mon–Sat), periods per day, and bell timings.
+1. **Academic Years**: Define batches, years, and sections (e.g., Year 2 Section A, B, C).
+2. **Faculty Master**: Add faculty names, codes, designations, and target weekly hours (or import via Excel).
+3. **Year Subjects Master**: Upload subjects once per academic year using a clean 3-column Excel file (`Subject Code`, `Subject Name`, `Weekly Periods`). Uploaded curriculum subjects become automatically available to every section in that year without duplicated master copies.
+4. **Section Faculty Mapping**: Select Year and Section to assign faculty members independently per section using drag-and-drop or dropdown selectors. The completeness card tracks assigned vs. missing faculty in real time.
+5. **Labs**: Configure labs as *Practical* (3 consecutive periods) or *Integrated* (2 periods).
+6. **Classrooms & Labs**: Add room numbers and capacities.
+7. **Settings**: Adjust working days (Mon–Sat), periods per day, and bell timings.
 
 ---
 

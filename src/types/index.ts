@@ -62,6 +62,7 @@ export interface Subject {
   yearId: string;
   subjectCode: string; // e.g. "CS301"
   subjectName: string;
+  weeklyPeriods: number; // Theory periods needed per week
 }
 
 export interface SubjectAssignment {

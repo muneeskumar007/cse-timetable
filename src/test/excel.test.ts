@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx';
 import {
   parseAndValidateFacultyExcel,
   parseAndValidateSubjectExcel,
+  parseAndValidateYearSubjectExcel,
 } from '../services/excelService';
 
 describe('Excel Parsing and Validation Service', () => {
@@ -60,5 +61,51 @@ describe('Excel Parsing and Validation Service', () => {
     expect(result.errors.length).toBe(1);
     expect(result.errors[0].error).toContain('FAC999');
     expect(result.errors[0].error).toContain('does not exist in Global Faculty Master');
+  });
+
+  it('parses valid 3-column year-wise subject excel successfully', () => {
+    const wsData = [
+      ['Subject Code', 'Subject Name', 'Weekly Periods'],
+      ['CS301', 'Data Structures', 4],
+      ['CS302', 'Digital Principles', 4],
+      ['CS303', 'Database Management Systems', 5],
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, '2nd_Year_Subjects');
+    const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+
+    const result = parseAndValidateYearSubjectExcel(buffer, 'year_2');
+    expect(result.errors.length).toBe(0);
+    expect(result.validSubjects.length).toBe(3);
+    expect(result.validSubjects[0]).toEqual({
+      subjectCode: 'CS301',
+      subjectName: 'Data Structures',
+      weeklyPeriods: 4,
+    });
+    expect(result.validSubjects[2].weeklyPeriods).toBe(5);
+  });
+
+  it('rejects invalid weekly periods and duplicate subject codes in year subject excel', () => {
+    const wsData = [
+      ['Subject Code', 'Subject Name', 'Weekly Periods'],
+      ['CS301', 'Data Structures', 0], // Invalid <= 0
+      ['CS302', 'Digital Principles', 'invalid'], // NaN
+      ['CS303', 'Database Systems', 4],
+      ['CS303', 'Duplicate Database', 4], // Duplicate
+    ];
+
+    const ws = XLSX.utils.aoa_to_sheet(wsData);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Subjects');
+    const buffer = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
+
+    const result = parseAndValidateYearSubjectExcel(buffer, 'year_2');
+    expect(result.validSubjects.length).toBe(1); // Only CS303 valid
+    expect(result.errors.length).toBe(3);
+    expect(result.errors[0].error).toContain('must be a positive integer');
+    expect(result.errors[1].error).toContain('must be a positive integer');
+    expect(result.errors[2].error).toContain('Duplicate Subject Code "CS303"');
   });
 });

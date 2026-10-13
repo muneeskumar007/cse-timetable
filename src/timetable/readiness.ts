@@ -2,6 +2,7 @@ import type {
   AcademicYear,
   Section,
   Faculty,
+  Subject,
   SubjectAssignment,
   Lab,
   Room,
@@ -36,6 +37,7 @@ export function checkGenerationReadiness(params: {
   years: AcademicYear[];
   sections: Section[];
   faculty: Faculty[];
+  subjects?: Subject[];
   assignments: SubjectAssignment[];
   labs: Lab[];
   rooms: Room[];
@@ -43,7 +45,18 @@ export function checkGenerationReadiness(params: {
   fixedAssignments?: FixedAssignment[];
   settings: DepartmentSettings;
 }): ReadinessReport {
-  const { years, sections, faculty, assignments, labs, rooms, fixedSlots, fixedAssignments = [], settings } = params;
+  const {
+    years,
+    sections,
+    faculty,
+    subjects = [],
+    assignments,
+    labs,
+    rooms,
+    fixedSlots,
+    fixedAssignments = [],
+    settings,
+  } = params;
   const checks: ReadinessCheckItem[] = [];
 
   // 1. Years & Sections Check
@@ -132,15 +145,71 @@ export function checkGenerationReadiness(params: {
   }
 
   // 3. Subject Assignments Check
-  if (assignments.length === 0) {
+  if (subjects.length === 0 && assignments.length === 0) {
     checks.push({
       id: 'assignments_exist',
       category: 'Subject Assignments',
       name: 'Subject Allocations',
       status: 'fail',
-      message: 'No subject assignments found. Upload subject Excel files for each year.',
+      message: 'No subjects or assignments found. Upload curriculum subjects for each year.',
     });
   } else {
+    // Check if every section has all of its year's subjects assigned with valid faculty
+    const unassignedSubjects: { section: Section; subject: Subject }[] = [];
+
+    if (subjects.length > 0) {
+      for (const s of sections) {
+        const secSubjects = subjects.filter((sub) => sub.yearId === s.yearId);
+        for (const sub of secSubjects) {
+          const assign = assignments.find(
+            (a) =>
+              a.sectionId === s.id &&
+              a.subjectCode.toUpperCase() === sub.subjectCode.toUpperCase() &&
+              !!a.facultyCode &&
+              a.facultyCode.trim() !== ''
+          );
+          if (!assign) {
+            unassignedSubjects.push({ section: s, subject: sub });
+          }
+        }
+      }
+    }
+
+    // Also check any assignments with empty facultyCode
+    const emptyFacultyAssignments = assignments.filter((a) => !a.facultyCode || !a.facultyCode.trim());
+
+    if (unassignedSubjects.length > 0) {
+      const errMsgs = unassignedSubjects.map(
+        (u) => `Section ${u.section.sectionName} has no faculty assigned for ${u.subject.subjectName} (${u.subject.subjectCode})`
+      );
+      checks.push({
+        id: 'missing_section_faculty',
+        category: 'Subject Assignments',
+        name: 'Section Faculty Completeness',
+        status: 'fail',
+        message: errMsgs.slice(0, 3).join('. ') + (errMsgs.length > 3 ? ` (and ${errMsgs.length - 3} more)` : '.'),
+      });
+    } else if (emptyFacultyAssignments.length > 0) {
+      const errMsgs = emptyFacultyAssignments.map(
+        (a) => `Section ${a.sectionName} has no faculty assigned for ${a.subjectName} (${a.subjectCode})`
+      );
+      checks.push({
+        id: 'missing_section_faculty',
+        category: 'Subject Assignments',
+        name: 'Section Faculty Completeness',
+        status: 'fail',
+        message: errMsgs.slice(0, 3).join('. ') + (errMsgs.length > 3 ? ` (and ${errMsgs.length - 3} more)` : '.'),
+      });
+    } else {
+      checks.push({
+        id: 'missing_section_faculty',
+        category: 'Subject Assignments',
+        name: 'Section Faculty Completeness',
+        status: 'pass',
+        message: 'All curriculum subjects across all sections have faculty assigned.',
+      });
+    }
+
     // Check if every section has subjects
     const sectionsWithoutSubjects = sections.filter(
       (s) => !assignments.some((a) => a.sectionId === s.id)
@@ -167,7 +236,7 @@ export function checkGenerationReadiness(params: {
   // Check unknown faculty codes in assignments
   const knownFacultyCodes = new Set(faculty.map((f) => f.facultyCode.toUpperCase()));
   const unknownFacultyAssignments = assignments.filter(
-    (a) => !knownFacultyCodes.has(a.facultyCode.toUpperCase())
+    (a) => !!a.facultyCode && !knownFacultyCodes.has(a.facultyCode.toUpperCase())
   );
   if (unknownFacultyAssignments.length > 0) {
     checks.push({

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { useData } from '../context/DataContext';
 import { cloudService } from '../services/cloudService';
 import { Card } from '../components/common/Card';
@@ -8,8 +8,8 @@ import { ConfirmationDialog } from '../components/common/ConfirmationDialog';
 import { useUiStore } from '../stores/uiStore';
 import {
   downloadSubjectTemplate,
-  parseAndValidateSubjectExcel,
-  type SubjectImportResult,
+  parseAndValidateYearSubjectExcel,
+  type YearSubjectImportResult,
 } from '../services/excelService';
 import {
   BookOpen,
@@ -21,156 +21,148 @@ import {
   AlertCircle,
   CheckCircle2,
   AlertTriangle,
+  ArrowRight,
+  Users,
 } from 'lucide-react';
-import type { SubjectAssignment, Subject } from '../types';
+import type { Subject } from '../types';
 
 export const SubjectsPage: React.FC = () => {
-  const { selectedYearId, setSelectedYearId, addToast } = useUiStore();
-  const { years, sections: allSections, assignments: allAssignments, faculty } = useData();
+  const { selectedYearId, setSelectedYearId, addToast, setPage } = useUiStore();
+  const { years, sections: allSections, subjects: allSubjects } = useData();
 
-  const sortedYears = [...years].sort((a, b) => a.orderIndex - b.orderIndex);
+  const sortedYears = useMemo(
+    () => [...years].sort((a, b) => a.orderIndex - b.orderIndex),
+    [years]
+  );
   const activeYearId = selectedYearId || sortedYears[0]?.id;
   const currentYear = sortedYears.find((y) => y.id === activeYearId) || sortedYears[0];
 
-  const sections = allSections.filter((s) => s.yearId === activeYearId);
-  const assignments = allAssignments.filter((a) => a.yearId === activeYearId);
-  const facultyMap = new Map(faculty.map((f) => [f.facultyCode.toUpperCase(), f.facultyName]));
+  const sections = useMemo(
+    () => allSections.filter((s) => s.yearId === activeYearId),
+    [allSections, activeYearId]
+  );
 
-  // Add / Edit Assignment State
+  const yearSubjects = useMemo(
+    () => allSubjects.filter((s) => s.yearId === activeYearId),
+    [allSubjects, activeYearId]
+  );
+
+  // Add / Edit Modal State
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [editingAssignment, setEditingAssignment] = useState<SubjectAssignment | null>(null);
+  const [editingSubject, setEditingSubject] = useState<Subject | null>(null);
   const [subjectCode, setSubjectCode] = useState('');
   const [subjectName, setSubjectName] = useState('');
-  const [targetSectionName, setTargetSectionName] = useState('A');
-  const [targetFacultyCode, setTargetFacultyCode] = useState('');
   const [weeklyPeriods, setWeeklyPeriods] = useState(4);
 
   // Delete State
-  const [deletingAssignment, setDeletingAssignment] = useState<SubjectAssignment | null>(null);
+  const [deletingSubject, setDeletingSubject] = useState<Subject | null>(null);
 
   // Excel Import State
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
-  const [importResult, setImportResult] = useState<SubjectImportResult | null>(null);
+  const [importResult, setImportResult] = useState<YearSubjectImportResult | null>(null);
   const [isImporting, setIsImporting] = useState(false);
 
   const openAddModal = () => {
-    setEditingAssignment(null);
+    setEditingSubject(null);
     setSubjectCode('');
     setSubjectName('');
-    setTargetSectionName(sections[0]?.sectionName || 'A');
-    setTargetFacultyCode(faculty[0]?.facultyCode || '');
     setWeeklyPeriods(4);
     setIsModalOpen(true);
   };
 
-  const openEditModal = (a: SubjectAssignment) => {
-    setEditingAssignment(a);
-    setSubjectCode(a.subjectCode);
-    setSubjectName(a.subjectName);
-    setTargetSectionName(a.sectionName);
-    setTargetFacultyCode(a.facultyCode);
-    setWeeklyPeriods(a.weeklyPeriods);
+  const openEditModal = (sub: Subject) => {
+    setEditingSubject(sub);
+    setSubjectCode(sub.subjectCode);
+    setSubjectName(sub.subjectName);
+    setWeeklyPeriods(sub.weeklyPeriods || 4);
     setIsModalOpen(true);
   };
 
-  const handleSaveAssignment = async (e: React.FormEvent) => {
+  const handleSaveSubject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentYear) return;
 
-    const cleanSubCode = subjectCode.trim().toUpperCase();
-    const cleanSubName = subjectName.trim();
-    const cleanFacCode = targetFacultyCode.trim().toUpperCase();
-    const sec = sections.find((s) => s.sectionName.toUpperCase() === targetSectionName.toUpperCase());
+    const cleanCode = subjectCode.trim().toUpperCase();
+    const cleanName = subjectName.trim();
+    const periodsNum = Number(weeklyPeriods) || 4;
 
-    if (!sec) {
-      addToast({ type: 'error', title: 'Invalid Section', message: 'Selected section not found.' });
+    if (!cleanCode || !cleanName) {
+      addToast({ type: 'error', title: 'Validation Error', message: 'Subject Code and Name are required.' });
       return;
     }
 
-    const facName = facultyMap.get(cleanFacCode) || cleanFacCode;
+    if (periodsNum <= 0) {
+      addToast({ type: 'error', title: 'Invalid Periods', message: 'Weekly Periods must be a positive integer.' });
+      return;
+    }
 
-    // Check duplicate assignment for same subject + section
-    if (!editingAssignment) {
-      const exists = assignments.some(
-        (a) => a.subjectCode.toUpperCase() === cleanSubCode && a.sectionId === sec.id
-      );
+    // Check duplicate code within this academic year
+    if (!editingSubject) {
+      const exists = yearSubjects.some((s) => s.subjectCode.toUpperCase() === cleanCode);
       if (exists) {
         addToast({
           type: 'error',
-          title: 'Duplicate Allocation',
-          message: `${cleanSubCode} is already assigned to Section ${sec.sectionName}.`,
+          title: 'Duplicate Subject Code',
+          message: `${cleanCode} already exists in ${currentYear.yearName}.`,
         });
         return;
       }
 
-      await cloudService.assignments.add({
-        id: `sa_${Date.now()}`,
+      await cloudService.subjects.add({
+        id: `sub_${currentYear.id}_${cleanCode}_${Date.now()}`,
         yearId: currentYear.id,
-        sectionId: sec.id,
-        sectionName: sec.sectionName,
-        subjectCode: cleanSubCode,
-        subjectName: cleanSubName,
-        facultyCode: cleanFacCode,
-        facultyName: facName,
-        weeklyPeriods: Number(weeklyPeriods) || 4,
+        subjectCode: cleanCode,
+        subjectName: cleanName,
+        weeklyPeriods: periodsNum,
       });
 
       addToast({
         type: 'success',
-        title: 'Subject Assigned',
-        message: `${cleanSubCode} mapped to Sec ${sec.sectionName} (${facName}).`,
+        title: 'Subject Added',
+        message: `${cleanCode} added to ${currentYear.yearName} curriculum.`,
       });
     } else {
-      await cloudService.assignments.update(editingAssignment.id, {
-        sectionId: sec.id,
-        sectionName: sec.sectionName,
-        subjectCode: cleanSubCode,
-        subjectName: cleanSubName,
-        facultyCode: cleanFacCode,
-        facultyName: facName,
-        weeklyPeriods: Number(weeklyPeriods) || 4,
+      await cloudService.subjects.update(editingSubject.id, {
+        subjectCode: cleanCode,
+        subjectName: cleanName,
+        weeklyPeriods: periodsNum,
       });
 
       addToast({
         type: 'success',
-        title: 'Assignment Updated',
-        message: `${cleanSubCode} updated for Sec ${sec.sectionName}.`,
+        title: 'Subject Updated',
+        message: `${cleanCode} updated successfully.`,
       });
     }
 
     setIsModalOpen(false);
   };
 
-  const handleDeleteAssignment = async () => {
-    if (!deletingAssignment) return;
-    await cloudService.assignments.delete(deletingAssignment.id);
+  const handleDeleteSubject = async () => {
+    if (!deletingSubject) return;
+    await cloudService.subjects.delete(deletingSubject.id);
     addToast({
       type: 'success',
-      title: 'Assignment Deleted',
-      message: `${deletingAssignment.subjectCode} removed from Section ${deletingAssignment.sectionName}.`,
+      title: 'Subject Deleted',
+      message: `${deletingSubject.subjectCode} removed from curriculum.`,
     });
-    setDeletingAssignment(null);
+    setDeletingSubject(null);
   };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !currentYear) return;
 
-    const validSecNames = sections.map((s) => s.sectionName);
     const reader = new FileReader();
     reader.onload = (evt) => {
       try {
         const buffer = evt.target?.result as ArrayBuffer;
-        const result = parseAndValidateSubjectExcel(
-          buffer,
-          currentYear.id,
-          validSecNames,
-          facultyMap
-        );
+        const result = parseAndValidateYearSubjectExcel(buffer, currentYear.id);
         setImportResult(result);
         setIsImportModalOpen(true);
-      } catch (err: any) {
-        addToast({ type: 'error', title: 'File Error', message: err?.message || 'Unable to parse Excel file.' });
+      } catch (err: unknown) {
+        const msg = err instanceof Error ? err.message : 'Unable to parse Excel file.';
+        addToast({ type: 'error', title: 'File Error', message: msg });
       }
     };
     reader.readAsArrayBuffer(file);
@@ -178,48 +170,30 @@ export const SubjectsPage: React.FC = () => {
   };
 
   const handleConfirmImport = async () => {
-    if (!importResult || !currentYear || importResult.validAssignments.length === 0) return;
+    if (!importResult || !currentYear || importResult.validSubjects.length === 0) return;
     setIsImporting(true);
 
     try {
-      // REPLACEMENT SEMANTICS: replace subject assignments for this year
-      const newSubjects: Subject[] = importResult.uniqueSubjects.map((s) => ({
+      const newSubjects: Subject[] = importResult.validSubjects.map((s) => ({
         id: `sub_${currentYear.id}_${s.subjectCode}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
         yearId: currentYear.id,
         subjectCode: s.subjectCode,
         subjectName: s.subjectName,
+        weeklyPeriods: s.weeklyPeriods,
       }));
 
-      // Map sectionName to actual sectionId
-      const newAssignments: SubjectAssignment[] = [];
-      for (const va of importResult.validAssignments) {
-        const sec = sections.find((s) => s.sectionName.toUpperCase() === va.sectionName.toUpperCase());
-        if (sec) {
-          newAssignments.push({
-            id: `sa_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`,
-            yearId: currentYear.id,
-            sectionId: sec.id,
-            sectionName: sec.sectionName,
-            subjectCode: va.subjectCode,
-            subjectName: va.subjectName,
-            facultyCode: va.facultyCode,
-            facultyName: va.facultyName,
-            weeklyPeriods: va.weeklyPeriods,
-          });
-        }
-      }
-
-      await cloudService.assignments.replaceForYear(currentYear.id, newAssignments, newSubjects);
+      await cloudService.subjects.replaceForYear(currentYear.id, newSubjects);
 
       addToast({
         type: 'success',
-        title: 'Subject Allocations Updated',
-        message: `Successfully loaded ${importResult.validAssignments.length} assignments for ${currentYear.yearName}. Previous allocations replaced.`,
+        title: 'Curriculum Updated',
+        message: `Successfully loaded ${newSubjects.length} subjects for ${currentYear.yearName}. Previous subjects for this year replaced.`,
       });
       setIsImportModalOpen(false);
       setImportResult(null);
-    } catch (err: any) {
-      addToast({ type: 'error', title: 'Import Failed', message: err?.message || 'Failed to update database.' });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Failed to update database.';
+      addToast({ type: 'error', title: 'Import Failed', message: msg });
     } finally {
       setIsImporting(false);
     }
@@ -228,35 +202,50 @@ export const SubjectsPage: React.FC = () => {
   return (
     <div className="space-y-6">
       {/* Year Selector Tabs */}
-      <div className="flex items-center gap-2 border-b border-slate-200 pb-3 overflow-x-auto">
-        {sortedYears.map((year) => {
-          const isSelected = (currentYear?.id || '') === year.id;
-          return (
-            <button
-              key={year.id}
-              onClick={() => setSelectedYearId(year.id)}
-              className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${
-                isSelected
-                  ? 'bg-indigo-600 text-white shadow-sm'
-                  : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
-              }`}
-            >
-              {year.yearName}
-            </button>
-          );
-        })}
+      <div className="flex items-center justify-between border-b border-slate-200 pb-3 flex-wrap gap-3">
+        <div className="flex items-center gap-2 overflow-x-auto">
+          {sortedYears.map((year) => {
+            const isSelected = (currentYear?.id || '') === year.id;
+            return (
+              <button
+                key={year.id}
+                onClick={() => setSelectedYearId(year.id)}
+                className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all whitespace-nowrap ${
+                  isSelected
+                    ? 'bg-indigo-600 text-white shadow-sm'
+                    : 'bg-white text-slate-600 hover:bg-slate-100 border border-slate-200'
+                }`}
+              >
+                {year.yearName}
+              </button>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setPage('section_faculty')}
+            icon={<Users className="w-4 h-4 text-indigo-600" />}
+          >
+            Assign Faculty per Section →
+          </Button>
+        </div>
       </div>
 
       {currentYear && (
         <>
-          {/* Action Bar */}
+          {/* Action & Info Bar */}
           <div className="flex flex-wrap items-center justify-between gap-4">
             <div>
-              <h2 className="text-xl font-bold text-slate-900">
-                {currentYear.yearName} — Subject Allocations
+              <h2 className="text-xl font-bold text-slate-900 flex items-center gap-2">
+                <BookOpen className="w-5 h-5 text-indigo-600" />
+                <span>{currentYear.yearName} — Subject Master</span>
               </h2>
-              <p className="text-xs text-slate-500">
-                Assign subjects and faculties across Sections {sections.map((s) => s.sectionName).join(', ')}
+              <p className="text-xs text-slate-500 mt-0.5">
+                Curriculum subjects defined here are automatically available to all sections (
+                {sections.map((s) => s.sectionName).join(', ') || 'A, B, C'}) in {currentYear.yearName}.
               </p>
             </div>
 
@@ -267,7 +256,7 @@ export const SubjectsPage: React.FC = () => {
                 onClick={() => downloadSubjectTemplate(currentYear.yearName)}
                 icon={<Download className="w-3.5 h-3.5" />}
               >
-                Download Excel Template
+                Download Template
               </Button>
 
               <label className="cursor-pointer">
@@ -283,22 +272,44 @@ export const SubjectsPage: React.FC = () => {
                 </span>
               </label>
 
-              <Button variant="primary" size="sm" onClick={openAddModal} icon={<Plus className="w-4 h-4" />}>
-                Add Allocation
+              <Button
+                variant="primary"
+                size="sm"
+                onClick={openAddModal}
+                icon={<Plus className="w-4 h-4" />}
+              >
+                Add Subject
               </Button>
             </div>
           </div>
 
-          {/* Assignments Table */}
+          {/* Sharing Scope Notification */}
+          <div className="p-3.5 bg-indigo-50/70 border border-indigo-100 rounded-xl flex items-center justify-between gap-4">
+            <div className="flex items-center gap-2.5 text-xs text-indigo-900">
+              <BookOpen className="w-4 h-4 text-indigo-600 flex-shrink-0" />
+              <span>
+                <strong>Shared Curriculum:</strong> Upload subjects once for {currentYear.yearName}. Then assign faculty separately for each section in the Section Faculty Assignment view.
+              </span>
+            </div>
+            <button
+              onClick={() => setPage('section_faculty')}
+              className="text-xs font-bold text-indigo-700 hover:text-indigo-900 flex items-center gap-1 whitespace-nowrap"
+            >
+              <span>Go to Faculty Assignment</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {/* Subjects Table */}
           <Card>
-            {assignments.length === 0 ? (
+            {yearSubjects.length === 0 ? (
               <div className="text-center py-12">
                 <BookOpen className="w-12 h-12 text-slate-300 mx-auto mb-3" />
                 <h3 className="text-base font-semibold text-slate-700">
-                  No Subjects Allocated for {currentYear.yearName}
+                  No Subjects Configured for {currentYear.yearName}
                 </h3>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1 mb-4">
-                  Upload the year-specific Excel file or add individual subject-faculty mappings manually.
+                  Upload an Excel file with columns (Subject Code, Subject Name, Weekly Periods) or add subjects manually.
                 </p>
                 <div className="flex justify-center gap-3">
                   <Button
@@ -319,50 +330,44 @@ export const SubjectsPage: React.FC = () => {
                 <table className="w-full text-left border-collapse text-sm">
                   <thead>
                     <tr className="bg-slate-50/80 border-b border-slate-200 text-xs font-semibold text-slate-600 uppercase tracking-wider">
-                      <th className="py-3 px-5">Code</th>
+                      <th className="py-3 px-5">Subject Code</th>
                       <th className="py-3 px-5">Subject Name</th>
-                      <th className="py-3 px-5 text-center">Section</th>
-                      <th className="py-3 px-5">Faculty Code</th>
-                      <th className="py-3 px-5">Faculty Name</th>
                       <th className="py-3 px-5 text-center">Weekly Periods</th>
+                      <th className="py-3 px-5">Shared Scope</th>
                       <th className="py-3 px-5 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
-                    {assignments.map((a) => (
-                      <tr key={a.id} className="hover:bg-slate-50/70 transition-colors">
-                        <td className="py-3.5 px-5 font-mono font-semibold text-indigo-700">
-                          {a.subjectCode}
+                    {yearSubjects.map((sub) => (
+                      <tr key={sub.id} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="py-3.5 px-5 font-mono font-bold text-indigo-700">
+                          {sub.subjectCode}
                         </td>
                         <td className="py-3.5 px-5 font-medium text-slate-900">
-                          {a.subjectName}
+                          {sub.subjectName}
                         </td>
                         <td className="py-3.5 px-5 text-center">
-                          <span className="w-6 h-6 rounded-md bg-indigo-100 text-indigo-700 font-bold inline-flex items-center justify-center text-xs">
-                            {a.sectionName}
+                          <span className="font-bold text-slate-800 bg-slate-100 px-2.5 py-1 rounded-md text-xs">
+                            {sub.weeklyPeriods || 4}
                           </span>
                         </td>
-                        <td className="py-3.5 px-5 font-mono text-slate-600 text-xs font-semibold">
-                          {a.facultyCode}
-                        </td>
-                        <td className="py-3.5 px-5 text-slate-800 font-medium">
-                          {a.facultyName}
-                        </td>
-                        <td className="py-3.5 px-5 text-center font-bold text-slate-900">
-                          {a.weeklyPeriods}
+                        <td className="py-3.5 px-5 text-slate-600 text-xs">
+                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200 font-semibold">
+                            Sections {sections.map((s) => s.sectionName).join(', ') || 'All'}
+                          </span>
                         </td>
                         <td className="py-3.5 px-5 text-right">
                           <div className="flex items-center justify-end gap-1.5">
                             <button
-                              title="Edit Allocation"
-                              onClick={() => openEditModal(a)}
+                              title="Edit Subject"
+                              onClick={() => openEditModal(sub)}
                               className="p-1.5 text-slate-400 hover:text-slate-700 hover:bg-slate-100 rounded-lg transition-colors"
                             >
                               <Edit2 className="w-4 h-4" />
                             </button>
                             <button
-                              title="Delete Allocation"
-                              onClick={() => setDeletingAssignment(a)}
+                              title="Delete Subject"
+                              onClick={() => setDeletingSubject(sub)}
                               className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -377,15 +382,15 @@ export const SubjectsPage: React.FC = () => {
             )}
           </Card>
 
-          {/* Add / Edit Assignment Modal */}
+          {/* Add / Edit Subject Modal */}
           <Modal
             isOpen={isModalOpen}
             onClose={() => setIsModalOpen(false)}
-            title={editingAssignment ? 'Edit Subject Allocation' : 'Add Subject Allocation'}
+            title={editingSubject ? 'Edit Subject' : 'Add Subject'}
             subtitle={`Academic Year: ${currentYear.yearName}`}
             maxWidth="md"
           >
-            <form onSubmit={handleSaveAssignment} className="space-y-4">
+            <form onSubmit={handleSaveSubject} className="space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
                   Subject Code *
@@ -414,57 +419,22 @@ export const SubjectsPage: React.FC = () => {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Section *
-                  </label>
-                  <select
-                    value={targetSectionName}
-                    onChange={(e) => setTargetSectionName(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  >
-                    {sections.map((s) => (
-                      <option key={s.id} value={s.sectionName}>
-                        Section {s.sectionName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                    Weekly Periods *
-                  </label>
-                  <input
-                    type="number"
-                    required
-                    min={1}
-                    max={10}
-                    value={weeklyPeriods}
-                    onChange={(e) => setWeeklyPeriods(Number(e.target.value))}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                  />
-                </div>
-              </div>
-
               <div>
                 <label className="block text-xs font-semibold text-slate-700 uppercase tracking-wider mb-1">
-                  Faculty Member *
+                  Weekly Periods *
                 </label>
-                <select
+                <input
+                  type="number"
                   required
-                  value={targetFacultyCode}
-                  onChange={(e) => setTargetFacultyCode(e.target.value)}
+                  min={1}
+                  max={10}
+                  value={weeklyPeriods}
+                  onChange={(e) => setWeeklyPeriods(Number(e.target.value))}
                   className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-indigo-500 focus:outline-none"
-                >
-                  <option value="">-- Select Faculty --</option>
-                  {faculty.map((f) => (
-                    <option key={f.id} value={f.facultyCode}>
-                      {f.facultyCode} — {f.facultyName} ({f.weeklyWorkload} periods)
-                    </option>
-                  ))}
-                </select>
+                />
+                <span className="text-[11px] text-slate-500 mt-1 block">
+                  Number of theory periods scheduled per week for each section.
+                </span>
               </div>
 
               <div className="flex justify-end gap-3 pt-3 border-t border-slate-100">
@@ -472,7 +442,7 @@ export const SubjectsPage: React.FC = () => {
                   Cancel
                 </Button>
                 <Button type="submit" variant="primary">
-                  {editingAssignment ? 'Save Changes' : 'Allocate Subject'}
+                  {editingSubject ? 'Save Changes' : 'Add Subject'}
                 </Button>
               </div>
             </form>
@@ -480,11 +450,11 @@ export const SubjectsPage: React.FC = () => {
 
           {/* Delete Confirmation */}
           <ConfirmationDialog
-            isOpen={!!deletingAssignment}
-            onClose={() => setDeletingAssignment(null)}
-            onConfirm={handleDeleteAssignment}
-            title="Delete Subject Allocation"
-            message={`Are you sure you want to remove ${deletingAssignment?.subjectCode} (${deletingAssignment?.subjectName}) for Section ${deletingAssignment?.sectionName}?`}
+            isOpen={!!deletingSubject}
+            onClose={() => setDeletingSubject(null)}
+            onConfirm={handleDeleteSubject}
+            title="Delete Subject"
+            message={`Are you sure you want to remove ${deletingSubject?.subjectCode} (${deletingSubject?.subjectName})? Associated section faculty mappings for this subject will also be cleaned up.`}
             confirmLabel="Delete"
             variant="danger"
           />
@@ -497,7 +467,7 @@ export const SubjectsPage: React.FC = () => {
               setImportResult(null);
             }}
             title={`${currentYear.yearName} — Subject Excel Import Preview`}
-            subtitle="Verify allocations before replacing existing data"
+            subtitle="Verify curriculum rows before replacing"
             maxWidth="2xl"
           >
             {importResult && (
@@ -508,8 +478,10 @@ export const SubjectsPage: React.FC = () => {
                     <span className="text-lg font-bold text-slate-800">{importResult.totalRows}</span>
                   </div>
                   <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl text-center">
-                    <span className="text-xs text-emerald-600 block">Valid Allocations</span>
-                    <span className="text-lg font-bold text-emerald-700">{importResult.validAssignments.length}</span>
+                    <span className="text-xs text-emerald-600 block">Valid Subjects</span>
+                    <span className="text-lg font-bold text-emerald-700">
+                      {importResult.validSubjects.length}
+                    </span>
                   </div>
                   <div className="p-3 bg-rose-50 border border-rose-200 rounded-xl text-center">
                     <span className="text-xs text-rose-600 block">Errors Found</span>
@@ -532,33 +504,31 @@ export const SubjectsPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Valid Assignments Table */}
-                {importResult.validAssignments.length > 0 && (
+                {/* Valid Subjects Table */}
+                {importResult.validSubjects.length > 0 && (
                   <div>
                     <h4 className="text-xs font-semibold text-slate-700 uppercase tracking-wider mb-2">
-                      Valid Allocations to Apply:
+                      Valid Subjects to Apply:
                     </h4>
                     <div className="border border-slate-200 rounded-lg max-h-56 overflow-y-auto">
                       <table className="w-full text-xs text-left">
                         <thead className="bg-slate-50 border-b border-slate-200 text-slate-600">
                           <tr>
-                            <th className="p-2">Code</th>
+                            <th className="p-2">Subject Code</th>
                             <th className="p-2">Subject Name</th>
-                            <th className="p-2">Sec</th>
-                            <th className="p-2">Faculty</th>
-                            <th className="p-2 text-center">Periods</th>
+                            <th className="p-2 text-center">Weekly Periods</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-100">
-                          {importResult.validAssignments.map((a, i) => (
+                          {importResult.validSubjects.map((s, i) => (
                             <tr key={i} className="hover:bg-slate-50/60">
-                              <td className="p-2 font-mono font-semibold text-indigo-600">{a.subjectCode}</td>
-                              <td className="p-2 font-medium text-slate-800">{a.subjectName}</td>
-                              <td className="p-2 font-bold text-slate-700">{a.sectionName}</td>
-                              <td className="p-2 text-slate-600">
-                                {a.facultyName} ({a.facultyCode})
+                              <td className="p-2 font-mono font-semibold text-indigo-600">
+                                {s.subjectCode}
                               </td>
-                              <td className="p-2 text-center font-bold text-slate-800">{a.weeklyPeriods}</td>
+                              <td className="p-2 font-medium text-slate-800">{s.subjectName}</td>
+                              <td className="p-2 text-center font-bold text-slate-800">
+                                {s.weeklyPeriods}
+                              </td>
                             </tr>
                           ))}
                         </tbody>
@@ -570,7 +540,7 @@ export const SubjectsPage: React.FC = () => {
                 <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
                   <span>
-                    <strong>Replacement Notice:</strong> Confirming this import will completely replace all previous subject allocations for <strong>{currentYear.yearName}</strong> with the valid records above.
+                    <strong>Replacement Notice:</strong> Confirming this import will replace the curriculum subjects for <strong>{currentYear.yearName}</strong> with the valid records above. Other academic years will remain completely unaffected.
                   </span>
                 </div>
 
@@ -587,7 +557,7 @@ export const SubjectsPage: React.FC = () => {
                   <Button
                     variant="primary"
                     onClick={handleConfirmImport}
-                    disabled={importResult.validAssignments.length === 0}
+                    disabled={importResult.validSubjects.length === 0}
                     isLoading={isImporting}
                     icon={<CheckCircle2 className="w-4 h-4" />}
                   >

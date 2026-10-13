@@ -2,6 +2,7 @@ import type {
   AcademicYear,
   Section,
   Faculty,
+  Subject,
   SubjectAssignment,
   Lab,
   Room,
@@ -19,6 +20,7 @@ export interface GenerationInput {
   years: AcademicYear[];
   sections: Section[];
   faculty: Faculty[];
+  subjects?: Subject[];
   assignments: SubjectAssignment[];
   labs: Lab[];
   rooms: Room[];
@@ -48,6 +50,47 @@ export function generateTimetable(input: GenerationInput): GenerationResult {
     periods,
     onProgress,
   } = input;
+
+  // Pre-flight check: Verify all section-specific subjects have assigned faculty
+  if (input.subjects && input.subjects.length > 0) {
+    for (const sec of sections) {
+      const secSubjects = input.subjects.filter((sub) => sub.yearId === sec.yearId);
+      for (const sub of secSubjects) {
+        const assign = assignments.find(
+          (a) =>
+            a.sectionId === sec.id &&
+            a.subjectCode.toUpperCase() === sub.subjectCode.toUpperCase() &&
+            !!a.facultyCode &&
+            a.facultyCode.trim() !== ''
+        );
+        if (!assign) {
+          return {
+            success: false,
+            entries: [],
+            diagnostics: [
+              `Section ${sec.sectionName} has no faculty assigned for ${sub.subjectName} (${sub.subjectCode}).`,
+              'All subjects must have assigned faculty per section before generation can proceed.',
+            ],
+          };
+        }
+      }
+    }
+  }
+
+  // Pre-flight check: Check any provided assignments for missing faculty
+  const missingFacultyAssignment = assignments.find(
+    (a) => !a.facultyCode || a.facultyCode.trim() === ''
+  );
+  if (missingFacultyAssignment) {
+    return {
+      success: false,
+      entries: [],
+      diagnostics: [
+        `Section ${missingFacultyAssignment.sectionName} has no faculty assigned for ${missingFacultyAssignment.subjectName} (${missingFacultyAssignment.subjectCode}).`,
+        'All subjects must have assigned faculty per section before generation can proceed.',
+      ],
+    };
+  }
 
   onProgress?.('Preparing timetable structures...', 5);
 

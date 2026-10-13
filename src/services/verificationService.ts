@@ -15,6 +15,7 @@ import type {
   Room,
   Section,
   SectionVerification,
+  Subject,
   SubjectAssignment,
   SubjectFrequencySummary,
   TimetableEntry,
@@ -116,7 +117,8 @@ export function verifySectionTimetable(
   fixedSlots: FixedSlot[],
   fixedAssignments: FixedAssignment[],
   settings: DepartmentSettings,
-  periods: PeriodConfig[]
+  periods: PeriodConfig[],
+  subjects?: Subject[]
 ): SectionVerification {
   const errors: ValidationError[] = [];
   const warnings: ValidationError[] = [];
@@ -162,10 +164,33 @@ export function verifySectionTimetable(
 
   const unassignedSlots = unassignedPeriodsList.length;
 
-  // 2. Subject Frequency Verification
+  // 2. Subject Frequency Verification & Section Faculty Completeness
   const sectionAssignments = assignments.filter(
     (a) => a.sectionId === section.id && a.yearId === year.id
   );
+
+  // Check whether all curriculum subjects defined for this year have faculty assigned in this section
+  if (subjects && subjects.length > 0) {
+    const yearSubjects = subjects.filter((s) => s.yearId === year.id);
+    for (const sub of yearSubjects) {
+      const match = sectionAssignments.find(
+        (a) =>
+          a.subjectCode.toUpperCase() === sub.subjectCode.toUpperCase() &&
+          !!a.facultyCode &&
+          a.facultyCode.trim() !== ''
+      );
+      if (!match) {
+        errors.push({
+          type: 'MISSING_DATA',
+          severity: 'error',
+          sectionId: section.id,
+          sectionName: section.sectionName,
+          subjectCode: sub.subjectCode,
+          message: `Section ${section.sectionName} has no faculty assigned for ${sub.subjectName} (${sub.subjectCode}).`,
+        });
+      }
+    }
+  }
 
   let theorySlotsCount = 0;
   const subjectSummaries: SubjectFrequencySummary[] = sectionAssignments.map((assignment) => {
@@ -393,7 +418,8 @@ export function verifyDepartmentTimetable(
   fixedSlots: FixedSlot[],
   fixedAssignments: FixedAssignment[],
   settings: DepartmentSettings,
-  periods: PeriodConfig[]
+  periods: PeriodConfig[],
+  subjects?: Subject[]
 ): DepartmentVerificationSummary {
   const sectionVerifications: SectionVerification[] = [];
 
@@ -409,7 +435,8 @@ export function verifyDepartmentTimetable(
         fixedSlots,
         fixedAssignments,
         settings,
-        periods
+        periods,
+        subjects
       );
       sectionVerifications.push(result);
     }

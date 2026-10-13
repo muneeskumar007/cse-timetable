@@ -6,6 +6,7 @@ import { Dashboard } from './pages/Dashboard';
 import { FacultyPage } from './pages/FacultyPage';
 import { YearsPage } from './pages/YearsPage';
 import { SubjectsPage } from './pages/SubjectsPage';
+import { SectionFacultyAssignmentPage } from './pages/SectionFacultyAssignmentPage';
 import { RoomsPage } from './pages/RoomsPage';
 import { LabsPage } from './pages/LabsPage';
 import { FixedAssignmentsPage } from './pages/FixedAssignmentsPage';
@@ -48,6 +49,8 @@ const AppContent: React.FC = () => {
         return <YearsPage />;
       case 'subjects':
         return <SubjectsPage />;
+      case 'section_faculty':
+        return <SectionFacultyAssignmentPage />;
       case 'rooms':
         return <RoomsPage />;
       case 'labs':
